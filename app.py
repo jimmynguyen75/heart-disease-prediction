@@ -490,7 +490,7 @@ def main():
                 n_cols = 2
                 n_rows = (len(selected_features) + 1) // 2
                 fig_dist, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5*n_rows))
-                axes = axes.flatten() if n_rows > 1 else [axes] if n_rows == 1 else axes
+                axes = np.array(axes).flatten()
                 
                 feature_vi = {
                     'age': 'Tuổi',
