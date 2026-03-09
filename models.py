@@ -76,7 +76,8 @@ class ModelTrainer:
                 voting='soft',  # average predicted probabilities across 5 networks
             ),
             'CIT': DecisionTreeClassifier(
-                random_state=self.random_state, criterion='entropy'
+                random_state=self.random_state, criterion='entropy',
+                min_samples_split=20, min_samples_leaf=10, ccp_alpha=0.005
             ),
         }
         
