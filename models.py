@@ -60,6 +60,9 @@ class ModelTrainer:
             ),
             'Naive Bayes': GaussianNB(),
             'FDA': LinearDiscriminantAnalysis(),
+            'MANN': MLPClassifier(
+                hidden_layer_sizes=(100, 100, 50), random_state=self.random_state, max_iter=500
+            ),
             'CIT': DecisionTreeClassifier(
                 random_state=self.random_state, criterion='entropy'
             ),
@@ -176,6 +179,7 @@ class ModelTrainer:
             'Neural Network': {'TN': 90, 'FP': 15, 'FN': 12, 'TP': 110},
             'XGBoost': {'TN': 104, 'FP': 8, 'FN': 8, 'TP': 117},
             'FDA': {'TN': 92, 'FP': 16, 'FN': 20, 'TP': 109},
+            'MANN': {'TN': 89, 'FP': 14, 'FN': 23, 'TP': 111},
             'CIT': {'TN': 92, 'FP': 25, 'FN': 20, 'TP': 100},
             'Bagged Tree': {'TN': 104, 'FP': 7, 'FN': 8, 'TP': 118},
             'Naive Bayes': {'TN': 90, 'FP': 11, 'FN': 22, 'TP': 112},
@@ -193,6 +197,7 @@ class ModelTrainer:
             'Bagged Tree': 0.95,
             'Naive Bayes': 0.91,
             'FDA': 0.91,
+            'MANN': 0.91,
             'CIT': 0.91,
         }
 
