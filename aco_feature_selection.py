@@ -128,7 +128,7 @@ def _ant_construct_solution(
 def run_aco(
     X: pd.DataFrame,
     y: pd.Series,
-    random_state: int = 42,
+    random_state: int = 123,
     progress_callback=None,
 ):
     """
