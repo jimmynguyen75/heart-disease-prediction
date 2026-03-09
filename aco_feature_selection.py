@@ -40,7 +40,6 @@ COMPARISON_MODELS = {
     'Bagged Tree': lambda rs: BaggingClassifier(estimator=DecisionTreeClassifier(random_state=rs), n_estimators=100, random_state=rs, n_jobs=-1),
     'Naive Bayes': lambda _: GaussianNB(),
     'FDA': lambda _: LinearDiscriminantAnalysis(),
-    'MANN': lambda rs: MLPClassifier(hidden_layer_sizes=(100, 100, 50), random_state=rs, max_iter=500),
     'CIT': lambda rs: DecisionTreeClassifier(random_state=rs, criterion='entropy'),
 }
 
