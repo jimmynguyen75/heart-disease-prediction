@@ -156,6 +156,40 @@ st.markdown("""
     [data-testid="stDataFrame"] * {
         text-align: left !important;
     }
+    /* Mobile responsive */
+    @media (max-width: 768px) {
+        .header-container {
+            padding: 1.5rem 1rem;
+        }
+        .header-container > div {
+            flex-direction: column !important;
+            align-items: center !important;
+            gap: 1rem !important;
+        }
+        .logo-container {
+            min-width: unset !important;
+            width: 100px;
+            padding: 1rem;
+        }
+        .logo-container img {
+            width: 80px !important;
+        }
+        .university-name {
+            font-size: 1.1rem !important;
+            text-align: center;
+        }
+        .university-short {
+            font-size: 0.85rem !important;
+            text-align: center;
+        }
+        .project-title {
+            font-size: 1rem !important;
+            text-align: center;
+        }
+        .info-row {
+            padding: 0.5rem 0.75rem;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
 
