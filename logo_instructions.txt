@@ -1,0 +1,21 @@
+INSTRUCTIONS FOR ADDING THE UNIVERSITY LOGO
+===========================================
+
+To add the HCMC International University logo to your application:
+
+1. Save the university logo image file as: logo.png
+   
+2. Place it in this directory:
+   /Users/jimmy/Desktop/Thesis Project/Project 2/logo.png
+
+3. The logo will automatically appear in:
+   - The Streamlit web application (top of the page)
+   - The generated PDF reports (title page)
+
+LOGO SPECIFICATIONS:
+- Format: PNG (recommended) or JPG
+- Recommended size: At least 500x500 pixels
+- The app will automatically resize it to fit
+
+NOTE: If the logo.png file is not found, the application will still work
+but will display only the text without the logo image.
