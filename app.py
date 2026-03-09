@@ -13,8 +13,6 @@ from models import ModelTrainer
 from report import ThesisReportGenerator
 from aco_feature_selection import run_aco, compare_all_feature_sets, ACO_N_ITER
 import os
-import time as _time
-from datetime import datetime
 
 # Page configuration
 st.set_page_config(
@@ -536,34 +534,11 @@ def main():
 
             with st.spinner("Training models..."):
                 trainer = ModelTrainer(random_state=123)
-                _t_train_start = _time.perf_counter()
                 results, predictions, probabilities = trainer.train_all_models(
                     X_train, y_train, X_test, y_test
                 )
-                _t_train_total = _time.perf_counter() - _t_train_start
                 st.success(f"✅ Trained {len(results)} models successfully!")
 
-            # Build training log
-            _log = [
-                f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Training pipeline started",
-                f"  Feature set : {feature_mode}",
-                f"  Features    : {', '.join(X_train.columns.tolist())}",
-                f"  Train size  : {len(X_train)} | Test size: {len(X_test)}",
-                f"  Random state: 123",
-                "",
-                "  Model Results:",
-            ]
-            for name, m in results.items():
-                _log.append(
-                    f"    {name:<22} Accuracy={m['accuracy']:.4f}  "
-                    f"AUC={m['roc_auc']:.4f}  F1={m['f1']:.4f}"
-                )
-            _log += [
-                "",
-                f"  Total training time : {_t_train_total:.2f}s",
-                f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Training complete",
-            ]
-            st.session_state['training_log'] = _log
 
             # Cross-validation
             if run_cv and k_values:
@@ -590,9 +565,6 @@ def main():
             st.balloons()
             st.success("🎉 Training pipeline completed successfully!")
 
-        if 'training_log' in st.session_state:
-            with st.expander("📋 Training Log", expanded=False):
-                st.code('\n'.join(st.session_state['training_log']), language=None)
 
         # --- Feature Set Comparison ---
         st.markdown("---")
