@@ -4,7 +4,6 @@ Based on thesis methodology: 50 iterations, 20 ants, alpha=1, beta=2, rho=0.1, t
 Fitness: AUC(S) - 0.05 * |S| / n_total_features
 """
 
-import time
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
@@ -210,16 +209,13 @@ def _eval_feature_set(df_clean, target_col, feature_list, random_state=123):
     results = {}
     for name, builder in COMPARISON_MODELS.items():
         clf = builder(random_state)
-        t0 = time.perf_counter()
         clf.fit(X_train_s, y_train)
-        train_time_ms = (time.perf_counter() - t0) * 1000
         y_pred = clf.predict(X_test_s)
         y_proba = clf.predict_proba(X_test_s)[:, 1]
         results[name] = {
             'accuracy': float(accuracy_score(y_test, y_pred)),
             'roc_auc': float(roc_auc_score(y_test, y_proba)),
             'f1': float(f1_score(y_test, y_pred)),
-            'train_time_ms': float(train_time_ms),
         }
     return results
 

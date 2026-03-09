@@ -197,7 +197,6 @@ def _show_feature_comparison(comparison: dict):
         avg_auc = np.mean([res[m]['roc_auc'] for m in model_names])
         avg_acc = np.mean([res[m]['accuracy'] for m in model_names])
         avg_f1 = np.mean([res[m]['f1'] for m in model_names])
-        avg_time = np.mean([res[m]['train_time_ms'] for m in model_names])
         summary_rows.append({
             'Feature Set': label,
             '# Features': n_feat,
@@ -205,23 +204,22 @@ def _show_feature_comparison(comparison: dict):
             'Avg AUC': f"{avg_auc:.4f}",
             'Avg Accuracy': f"{avg_acc:.4f}",
             'Avg F1': f"{avg_f1:.4f}",
-            'Avg Train Time': f"{avg_time:.1f} ms",
         })
     st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
     st.markdown("---")
 
     # --- Per-model tabs ---
-    metrics = [('roc_auc', 'AUC'), ('accuracy', 'Accuracy'), ('f1', 'F1'), ('train_time_ms', 'Train Time (ms)')]
-    tab_auc, tab_acc, tab_f1, tab_time = st.tabs(["ROC-AUC", "Accuracy", "F1", "Train Time"])
+    metrics = [('roc_auc', 'AUC'), ('accuracy', 'Accuracy'), ('f1', 'F1')]
+    tab_auc, tab_acc, tab_f1 = st.tabs(["ROC-AUC", "Accuracy", "F1"])
 
-    for tab, (metric_key, metric_label) in zip([tab_auc, tab_acc, tab_f1, tab_time], metrics):
+    for tab, (metric_key, metric_label) in zip([tab_auc, tab_acc, tab_f1], metrics):
         with tab:
             rows = []
             for model in model_names:
                 row = {'Model': model}
                 for label in set_labels:
                     val = comparison[label]['results'][model][metric_key]
-                    row[label] = f"{val:.1f} ms" if metric_key == 'train_time_ms' else f"{val:.4f}"
+                    row[label] = f"{val:.4f}"
                 rows.append(row)
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
@@ -232,17 +230,12 @@ def _show_feature_comparison(comparison: dict):
             for i, (label, color) in enumerate(zip(set_labels, colors)):
                 vals = [comparison[label]['results'][m][metric_key] for m in model_names]
                 bars = ax.bar(x + i * width, vals, width, label=label, color=color, alpha=0.85)
-                fmt = '%.0f' if metric_key == 'train_time_ms' else '%.3f'
-                ax.bar_label(bars, fmt=fmt, fontsize=7, rotation=90, padding=2)
+                ax.bar_label(bars, fmt='%.3f', fontsize=7, rotation=90, padding=2)
             ax.set_ylabel(metric_label)
             ax.set_title(f"{metric_label} — Baseline vs ACO vs All Features")
             ax.set_xticks(x + width)
             ax.set_xticklabels(model_names, rotation=20, ha='right')
-            if metric_key == 'train_time_ms':
-                max_val = max(comparison[label]['results'][m][metric_key] for label in set_labels for m in model_names)
-                ax.set_ylim(0, max_val * 1.3)
-            else:
-                ax.set_ylim(0, 1.15)
+            ax.set_ylim(0, 1.15)
             ax.legend()
             plt.tight_layout()
             st.pyplot(fig)
