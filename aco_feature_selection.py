@@ -7,7 +7,7 @@ Fitness: AUC(S) - 0.05 * |S| / n_total_features
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, BaggingClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, BaggingClassifier, VotingClassifier
 from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
@@ -40,7 +40,16 @@ COMPARISON_MODELS = {
     'Bagged Tree': lambda rs: BaggingClassifier(estimator=DecisionTreeClassifier(random_state=rs), n_estimators=100, random_state=rs, n_jobs=-1),
     'Naive Bayes': lambda _: GaussianNB(),
     'FDA': lambda _: LinearDiscriminantAnalysis(),
-    'MANN': lambda rs: MLPClassifier(hidden_layer_sizes=(100, 100, 50), random_state=rs, max_iter=500),
+    'MANN': lambda rs: VotingClassifier(
+        estimators=[
+            ('mlp1', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=rs,     max_iter=500)),
+            ('mlp2', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=rs + 1, max_iter=500)),
+            ('mlp3', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=rs + 2, max_iter=500)),
+            ('mlp4', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=rs + 3, max_iter=500)),
+            ('mlp5', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=rs + 4, max_iter=500)),
+        ],
+        voting='soft',
+    ),
     'CIT': lambda rs: DecisionTreeClassifier(random_state=rs, criterion='entropy'),
 }
 

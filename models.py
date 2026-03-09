@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression, BayesianRidge
 from sklearn.ensemble import (RandomForestClassifier, GradientBoostingClassifier,
-                              BaggingClassifier, AdaBoostClassifier)
+                              BaggingClassifier, AdaBoostClassifier, VotingClassifier)
 from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.naive_bayes import GaussianNB
@@ -60,8 +60,15 @@ class ModelTrainer:
             ),
             'Naive Bayes': GaussianNB(),
             'FDA': LinearDiscriminantAnalysis(),
-            'MANN': MLPClassifier(
-                hidden_layer_sizes=(100, 100, 50), random_state=self.random_state, max_iter=500
+            'MANN': VotingClassifier(
+                estimators=[
+                    ('mlp1', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=self.random_state,     max_iter=500)),
+                    ('mlp2', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=self.random_state + 1, max_iter=500)),
+                    ('mlp3', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=self.random_state + 2, max_iter=500)),
+                    ('mlp4', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=self.random_state + 3, max_iter=500)),
+                    ('mlp5', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=self.random_state + 4, max_iter=500)),
+                ],
+                voting='soft',  # average predicted probabilities across 5 networks
             ),
             'CIT': DecisionTreeClassifier(
                 random_state=self.random_state, criterion='entropy'
