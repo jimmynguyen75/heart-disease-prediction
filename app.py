@@ -512,7 +512,7 @@ def main():
         st.markdown("### Step 1: Choose Feature Set")
         feature_mode = st.radio(
             "Feature set to use for training:",
-            ["Baseline", "ACO-selected features", "All features"],
+            ["ACO-selected features", "Baseline", "All features"],
             horizontal=True,
         )
 
