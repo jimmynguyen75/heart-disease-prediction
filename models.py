@@ -308,9 +308,9 @@ class ModelTrainer:
                 # Diagonal reference line
                 axes[idx].plot([0, 1], [0, 1], 'k--', linewidth=1, alpha=0.3)
 
-                axes[idx].set_xlabel('False Positive Rate', fontsize=10)
-                axes[idx].set_ylabel('True Positive Rate', fontsize=10)
-                axes[idx].set_title(f'{name} ROC Curve', fontsize=12, fontweight='bold')
+                axes[idx].set_xlabel('Tỷ lệ dương tính giả (False Positive Rate)', fontsize=10)
+                axes[idx].set_ylabel('Tỷ lệ dương tính thật (True Positive Rate)', fontsize=10)
+                axes[idx].set_title(f'Đường cong ROC — {name}', fontsize=12, fontweight='bold')
                 axes[idx].legend(loc='lower right', fontsize=9)
                 axes[idx].grid(alpha=0.3)
 

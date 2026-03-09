@@ -76,7 +76,7 @@ class DataPreprocessor:
         fig, ax = plt.subplots(figsize=(12, 10))
         sns.heatmap(corr_matrix, annot=True, fmt='.2f', cmap='coolwarm', 
                    center=0, square=True, linewidths=1, ax=ax)
-        plt.title('Correlation Matrix', fontsize=16, fontweight='bold')
+        plt.title('Ma trận tương quan (Correlation Matrix)', fontsize=16, fontweight='bold')
         plt.tight_layout()
         
         return fig
