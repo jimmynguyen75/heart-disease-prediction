@@ -700,43 +700,22 @@ def main():
             # Create comparison bar chart
             fig_compare, axes = plt.subplots(1, 3, figsize=(18, 6))
 
-            # Sort by accuracy for better visualization
-            sorted_indices = np.argsort(accuracies)[::-1]
-            sorted_names = [model_names[i] for i in sorted_indices]
-            sorted_acc = [accuracies[i] for i in sorted_indices]
-            sorted_auc = [roc_aucs[i] for i in sorted_indices]
-            sorted_f1 = [f1_scores[i] for i in sorted_indices]
+            def _sorted_chart(ax, values, names, xlabel, title):
+                idx = np.argsort(values)[::-1]
+                s_names = [names[i] for i in idx]
+                s_vals = [values[i] for i in idx]
+                clrs = plt.cm.RdYlGn(np.linspace(0.3, 0.9, len(s_names)))
+                bars = ax.barh(s_names, s_vals, color=clrs)
+                ax.set_xlabel(xlabel, fontsize=12)
+                ax.set_title(title, fontsize=14, fontweight='bold')
+                ax.set_xlim(0, 1)
+                for bar, val in zip(bars, s_vals):
+                    ax.text(val + 0.01, bar.get_y() + bar.get_height()/2,
+                            f'{val:.3f}', va='center', fontsize=9)
 
-            # Color gradient based on performance
-            colors = plt.cm.RdYlGn(np.linspace(0.3, 0.9, len(sorted_names)))
-
-            # Accuracy Chart
-            bars1 = axes[0].barh(sorted_names, sorted_acc, color=colors)
-            axes[0].set_xlabel('Accuracy', fontsize=12)
-            axes[0].set_title('Model Accuracy Comparison', fontsize=14, fontweight='bold')
-            axes[0].set_xlim(0, 1)
-            for i, (bar, val) in enumerate(zip(bars1, sorted_acc)):
-                axes[0].text(val + 0.01, bar.get_y() + bar.get_height()/2,
-                           f'{val:.3f}', va='center', fontsize=9)
-
-            # ROC-AUC Chart
-            colors_auc = plt.cm.RdYlGn(np.linspace(0.3, 0.9, len(sorted_names)))
-            bars2 = axes[1].barh(sorted_names, sorted_auc, color=colors_auc)
-            axes[1].set_xlabel('ROC-AUC', fontsize=12)
-            axes[1].set_title('Model ROC-AUC Comparison', fontsize=14, fontweight='bold')
-            axes[1].set_xlim(0, 1)
-            for i, (bar, val) in enumerate(zip(bars2, sorted_auc)):
-                axes[1].text(val + 0.01, bar.get_y() + bar.get_height()/2,
-                           f'{val:.3f}', va='center', fontsize=9)
-
-            # F1-Score Chart
-            bars3 = axes[2].barh(sorted_names, sorted_f1, color=colors)
-            axes[2].set_xlabel('F1-Score', fontsize=12)
-            axes[2].set_title('Model F1-Score Comparison', fontsize=14, fontweight='bold')
-            axes[2].set_xlim(0, 1)
-            for i, (bar, val) in enumerate(zip(bars3, sorted_f1)):
-                axes[2].text(val + 0.01, bar.get_y() + bar.get_height()/2,
-                           f'{val:.3f}', va='center', fontsize=9)
+            _sorted_chart(axes[0], accuracies, model_names, 'Accuracy', 'Model Accuracy Comparison')
+            _sorted_chart(axes[1], roc_aucs, model_names, 'ROC-AUC', 'Model ROC-AUC Comparison')
+            _sorted_chart(axes[2], f1_scores, model_names, 'F1-Score', 'Model F1-Score Comparison')
 
             plt.tight_layout()
             st.pyplot(fig_compare)
