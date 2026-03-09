@@ -14,6 +14,8 @@ from sklearn.naive_bayes import GaussianNB
 from sklearn.neural_network import MLPClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import PolynomialFeatures
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.metrics import (accuracy_score, precision_score, recall_score,
                              f1_score, confusion_matrix, roc_auc_score, roc_curve)
@@ -59,7 +61,10 @@ class ModelTrainer:
                 n_estimators=100, random_state=self.random_state, n_jobs=-1
             ),
             'Naive Bayes': GaussianNB(),
-            'FDA': LinearDiscriminantAnalysis(),
+            'FDA': Pipeline([
+                ('basis', PolynomialFeatures(degree=2, include_bias=False)),
+                ('lda', LinearDiscriminantAnalysis())
+            ]),
             'MANN': VotingClassifier(
                 estimators=[
                     ('mlp1', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=self.random_state,     max_iter=500)),
