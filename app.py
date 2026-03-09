@@ -1185,43 +1185,51 @@ def main():
 """
             },
             "FDA": {
-                "sklearn_class": "LinearDiscriminantAnalysis",
-                "import_from": "sklearn.discriminant_analysis",
-                "code": """LinearDiscriminantAnalysis()""",
+                "sklearn_class": "Pipeline([PolynomialFeatures, LinearDiscriminantAnalysis])",
+                "import_from": "sklearn.pipeline / sklearn.preprocessing / sklearn.discriminant_analysis",
+                "code": """Pipeline([
+    ('basis', PolynomialFeatures(degree=2, include_bias=False)),
+    ('lda', LinearDiscriminantAnalysis())
+])""",
                 "parameters": {
-                    "(no parameters)": "Sử dụng default settings với SVD solver"
+                    "PolynomialFeatures(degree=2)": "Tạo basis expansions bậc 2 (x², x·y, ...) — mô phỏng non-linear correlations của FDA",
+                    "include_bias=False": "Không thêm bias term (hằng số)",
+                    "LinearDiscriminantAnalysis()": "Phân tích discriminant trên không gian đã mở rộng"
                 },
                 "explanation": """
 **Cách hoạt động trong code:**
-1. Tìm linear combinations của features tối đa hóa class separation
-2. Giả định: Mỗi class có phân phối Gaussian với covariance matrix giống nhau
-3. Tính between-class và within-class scatter matrices
-4. Tìm discriminant functions để project data
-5. Trong code này: Sử dụng LDA như proxy cho FDA (sklearn không có FDA riêng)
-6. Default solver='svd': Singular Value Decomposition
+1. FDA = LDA + non-linear basis expansions (định nghĩa từ paper)
+2. Bước 1 (PolynomialFeatures): Tạo các features mới x², x·y, ... từ features gốc
+3. Bước 2 (LDA): Tìm discriminant functions trên không gian đã mở rộng
+4. sklearn không có native FDA → dùng Pipeline để mô phỏng
+5. True FDA (MARS-based) cần thư viện pyearth, không tương thích Python 3.12+
 """
             },
             "MANN": {
-                "sklearn_class": "MLPClassifier",
-                "import_from": "sklearn.neural_network",
-                "code": """MLPClassifier(
-    hidden_layer_sizes=(100, 100, 50),
-    random_state=123,
-    max_iter=500
+                "sklearn_class": "VotingClassifier (5x MLPClassifier)",
+                "import_from": "sklearn.ensemble / sklearn.neural_network",
+                "code": """VotingClassifier(
+    estimators=[
+        ('mlp1', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=123,   max_iter=500)),
+        ('mlp2', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=124, max_iter=500)),
+        ('mlp3', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=125, max_iter=500)),
+        ('mlp4', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=126, max_iter=500)),
+        ('mlp5', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=127, max_iter=500)),
+    ],
+    voting='soft',
 )""",
                 "parameters": {
-                    "hidden_layer_sizes=(100, 100, 50)": "3 hidden layers: 100 → 100 → 50 neurons (deeper network)",
-                    "random_state=123": "Seed cho weight initialization",
-                    "max_iter=500": "Số epochs tối đa"
+                    "5x MLPClassifier": "5 neural networks độc lập, mỗi cái khởi tạo với random_state khác nhau",
+                    "hidden_layer_sizes=(100, 50)": "Mỗi network có 2 hidden layers: 100 và 50 neurons",
+                    "voting='soft'": "Average xác suất từ 5 networks (thay vì majority voting)"
                 },
                 "explanation": """
 **Cách hoạt động trong code:**
-1. Network sâu hơn Neural Network thường: 3 hidden layers thay vì 2
-2. Architecture: Input → 100 → 100 → 50 → Output
-3. Trong implementation này: Đây là single deeper MLP, không phải true ensemble
-4. Mục đích: Capture more complex patterns với deeper architecture
-5. Lưu ý: True MANN sẽ train nhiều networks và average predictions
-6. Có thể prone to overfitting hơn do nhiều parameters hơn
+1. Train 5 MLPs với initialization khác nhau (random_state 123→127)
+2. Mỗi MLP học từ cùng training data nhưng khởi đầu khác nhau → diversity
+3. `voting='soft'`: Prediction cuối = trung bình xác suất từ 5 networks
+4. Giảm variance so với 1 MLP duy nhất (ensemble effect)
+5. Đúng với định nghĩa MANN: ensemble technique combines individual model strengths
 """
             },
             "CIT": {
@@ -1229,20 +1237,24 @@ def main():
                 "import_from": "sklearn.tree",
                 "code": """DecisionTreeClassifier(
     random_state=123,
-    criterion='entropy'
+    criterion='entropy',
+    min_samples_split=20,
+    min_samples_leaf=10,
+    ccp_alpha=0.005
 )""",
                 "parameters": {
-                    "random_state=123": "Seed cho reproducibility khi có ties",
-                    "criterion='entropy'": "Sử dụng Information Gain (entropy) thay vì Gini impurity"
+                    "criterion='entropy'": "Sử dụng Information Gain để chọn splits",
+                    "min_samples_split=20": "Tối thiểu 20 mẫu để tách node (giống ngưỡng significance testing của CIT)",
+                    "min_samples_leaf=10": "Tối thiểu 10 mẫu trong mỗi leaf",
+                    "ccp_alpha=0.005": "Cost-complexity pruning để tránh overfitting (giống CIT)"
                 },
                 "explanation": """
 **Cách hoạt động trong code:**
-1. Xây dựng decision tree dựa trên Information Gain
-2. `criterion='entropy'`: Split dựa trên việc giảm entropy (uncertainty)
-3. Information Gain = Entropy(parent) - Weighted_Avg_Entropy(children)
-4. Trong implementation này: Sử dụng Decision Tree với entropy như proxy cho CIT
-5. True CIT sử dụng statistical tests (permutation tests) để chọn splits
-6. sklearn không có native CIT implementation
+1. CIT thực sự dùng hypothesis testing (permutation test) để chọn splits
+2. sklearn không có native CIT → dùng pruned Decision Tree như approximation
+3. `min_samples_split/leaf`: Yêu cầu đủ mẫu → giảm overfitting như CIT
+4. `ccp_alpha`: Cost-complexity pruning → tránh overfitting như CIT
+5. True CIT chỉ có trong R (package partykit, hàm ctree())
 """
             }
         }
