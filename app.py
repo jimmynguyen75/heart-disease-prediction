@@ -13,6 +13,7 @@ from models import ModelTrainer
 from report import ThesisReportGenerator
 from aco_feature_selection import run_aco, compare_all_feature_sets, ACO_N_ITER
 import os
+import time as _time
 from datetime import datetime
 
 # Page configuration
@@ -205,7 +206,7 @@ def _show_feature_comparison(comparison: dict):
             'Avg Accuracy': f"{avg_acc:.4f}",
             'Avg F1': f"{avg_f1:.4f}",
         })
-    st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(summary_rows), hide_index=True)
     st.markdown("---")
 
     # --- Per-model tabs ---
@@ -221,7 +222,7 @@ def _show_feature_comparison(comparison: dict):
                     val = comparison[label]['results'][model][metric_key]
                     row[label] = f"{val:.4f}"
                 rows.append(row)
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rows), hide_index=True)
 
             x = np.arange(len(model_names))
             width = 0.25
@@ -399,11 +400,11 @@ def main():
         
         # Display first 100 rows
         st.subheader("Data Preview (First 100 rows)")
-        st.dataframe(df.head(100), use_container_width=True)
+        st.dataframe(df.head(100))
         
         # Data summary
         st.subheader("Statistical Summary")
-        st.dataframe(df.describe(), use_container_width=True)
+        st.dataframe(df.describe())
         
         # Missing values
         if df.isnull().sum().sum() > 0:
@@ -414,7 +415,7 @@ def main():
                 'Missing %': (df.isnull().sum() / len(df) * 100).values
             })
             missing_df = missing_df[missing_df['Missing Count'] > 0]
-            st.dataframe(missing_df, use_container_width=True)
+            st.dataframe(missing_df)
     
     # Tab 2: EDA
     with tab2:
@@ -535,10 +536,34 @@ def main():
 
             with st.spinner("Training models..."):
                 trainer = ModelTrainer(random_state=123)
+                _t_train_start = _time.perf_counter()
                 results, predictions, probabilities = trainer.train_all_models(
                     X_train, y_train, X_test, y_test
                 )
+                _t_train_total = _time.perf_counter() - _t_train_start
                 st.success(f"✅ Trained {len(results)} models successfully!")
+
+            # Build training log
+            _log = [
+                f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Training pipeline started",
+                f"  Feature set : {feature_mode}",
+                f"  Features    : {', '.join(X_train.columns.tolist())}",
+                f"  Train size  : {len(X_train)} | Test size: {len(X_test)}",
+                f"  Random state: 123",
+                "",
+                "  Model Results:",
+            ]
+            for name, m in results.items():
+                _log.append(
+                    f"    {name:<22} Accuracy={m['accuracy']:.4f}  "
+                    f"AUC={m['roc_auc']:.4f}  F1={m['f1']:.4f}"
+                )
+            _log += [
+                "",
+                f"  Total training time : {_t_train_total:.2f}s",
+                f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Training complete",
+            ]
+            st.session_state['training_log'] = _log
 
             # Cross-validation
             if run_cv and k_values:
@@ -564,6 +589,10 @@ def main():
 
             st.balloons()
             st.success("🎉 Training pipeline completed successfully!")
+
+        if 'training_log' in st.session_state:
+            with st.expander("📋 Training Log", expanded=False):
+                st.code('\n'.join(st.session_state['training_log']), language=None)
 
         # --- Feature Set Comparison ---
         st.markdown("---")
@@ -606,7 +635,6 @@ def main():
             st.subheader("Table 3: Performance Metrics")
             st.dataframe(
                 results_tables['table3'],
-                use_container_width=True,
                 hide_index=True,
                 column_config={
                     "No.": st.column_config.NumberColumn(width="small"),
@@ -618,7 +646,6 @@ def main():
             st.subheader("Table 4: ROC-AUC Values")
             st.dataframe(
                 results_tables['table4'],
-                use_container_width=True,
                 hide_index=True,
                 column_config={
                     "No.": st.column_config.NumberColumn(width="small"),
@@ -630,7 +657,6 @@ def main():
             st.subheader("Table 5: Confusion Matrix Summary")
             st.dataframe(
                 results_tables['table5'],
-                use_container_width=True,
                 hide_index=True,
                 column_config={
                     "No.": st.column_config.NumberColumn(width="small"),
@@ -643,7 +669,6 @@ def main():
                 st.subheader("Table 6: K-Fold Cross-Validation Results")
                 st.dataframe(
                     results_tables['table6'],
-                    use_container_width=True,
                     hide_index=True,
                     column_config={
                         "No.": st.column_config.NumberColumn(width="small"),
@@ -832,7 +857,7 @@ def main():
                         top_features['Importance'] = top_features['Importance'].apply(lambda x: f"{x:.4f}")
                         top_features = top_features.reset_index(drop=True)
                         top_features.insert(0, 'Rank', range(1, len(top_features) + 1))
-                        st.dataframe(top_features, use_container_width=True, hide_index=True)
+                        st.dataframe(top_features, hide_index=True)
 
                         # Interpretation
                         st.markdown("#### Interpretation")
@@ -1278,7 +1303,7 @@ roc_auc = roc_auc_score(y_test, y_proba)""", language='python')
             })
 
         summary_df = pd.DataFrame(summary_data)
-        st.dataframe(summary_df, use_container_width=True, hide_index=True)
+        st.dataframe(summary_df, hide_index=True)
 
         # Cross-validation explanation
         st.markdown("---")
@@ -1516,7 +1541,7 @@ std_accuracy = scores.std()""", language='python')
                     # Display table with formatted probability
                     display_df = pred_df.copy()
                     display_df['Probability'] = display_df['Probability'].apply(lambda x: f"{x:.1%}")
-                    st.dataframe(display_df, use_container_width=True, hide_index=True)
+                    st.dataframe(display_df, hide_index=True)
 
                     # Visualization
                     st.markdown("#### Probability Comparison")
