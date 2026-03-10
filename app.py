@@ -300,7 +300,7 @@ def main():
     )
     
     # Load data
-    preprocessor = DataPreprocessor(random_state=123)
+    preprocessor = DataPreprocessor(random_state=201)
     
     if data_source == "Use Default Dataset":
         # Use local path instead of /mnt
@@ -585,14 +585,14 @@ def main():
                            f"Features ({len(X_train.columns)}): {', '.join(X_train.columns.tolist())}")
 
             with st.spinner("Training models..."):
-                trainer = ModelTrainer(random_state=123)
+                trainer = ModelTrainer(random_state=201)
                 results, predictions, probabilities = trainer.train_all_models(
                     X_train, y_train, X_test, y_test
                 )
                 st.success(f"✅ Trained {len(results)} models successfully!")
 
 
-            # Cross-validation
+            # Cross-validation trên full dataset
             if run_cv and k_values:
                 with st.spinner("Performing cross-validation..."):
                     X_full = pd.concat([X_train, X_test])
@@ -633,7 +633,7 @@ def main():
                 baseline_feats = [f for f in paper_features if f in df_temp.columns]
                 aco_feats = st.session_state['aco_features']
                 with st.spinner("Training all models on 3 feature sets... this may take a minute."):
-                    comparison = compare_all_feature_sets(df_temp, target_col, baseline_feats, aco_feats, random_state=123)
+                    comparison = compare_all_feature_sets(df_temp, target_col, baseline_feats, aco_feats, random_state=201)
                 st.session_state['feature_comparison'] = comparison
 
             if 'feature_comparison' in st.session_state:
