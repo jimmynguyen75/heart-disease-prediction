@@ -350,6 +350,9 @@ class ModelTrainer:
         cm_data = []
         for name, metrics in results.items():
             cm = metrics['confusion_matrix']
+            # Pad to 2x2 if confusion matrix is not standard shape (e.g., only 1 class predicted)
+            if len(cm) < 2 or len(cm[0]) < 2:
+                cm = [[cm[0][0] if cm else 0, 0], [0, 0]]
             cm_data.append({
                 'Model': name,
                 'TN': str(cm[0][0]),

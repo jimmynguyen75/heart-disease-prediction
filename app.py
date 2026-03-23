@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from preprocessing import DataPreprocessor, prepare_features_for_aco
+from preprocessing import DataPreprocessor, prepare_features_for_aco, preprocess_vn_data
 from models import ModelTrainer
 from report import ThesisReportGenerator
 from aco_feature_selection import run_aco, compare_all_feature_sets, ACO_N_ITER
@@ -193,9 +193,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-def _run_aco_selection(df_clean, target_col):
+def _run_aco_selection(df_clean, target_col, feature_pool=None):
     """Run ACO and store selected features + convergence history in session_state."""
     X_all, y_all = prepare_features_for_aco(df_clean, target_col)
+    if feature_pool is not None:
+        X_all = X_all[[f for f in feature_pool if f in X_all.columns]]
 
     progress_bar = st.progress(0, text=f"Running ACO (0/{ACO_N_ITER} iterations)...")
 
@@ -318,8 +320,24 @@ def main():
     else:
         uploaded_file = st.sidebar.file_uploader("Upload CSV file", type=['csv'])
         if uploaded_file is not None:
-            df = pd.read_csv(uploaded_file)
-            st.sidebar.success(f"✅ Uploaded dataset: {df.shape[0]} rows, {df.shape[1]} columns")
+            df_raw = pd.read_csv(uploaded_file)
+            if "_vn" in uploaded_file.name:
+                try:
+                    df, maxn_to_tenxn = preprocess_vn_data(df_raw)
+                    st.session_state['is_vn'] = True
+                    st.session_state['maxn_to_tenxn'] = maxn_to_tenxn
+                    st.sidebar.success(
+                        f"✅ Vietnamese format detected & preprocessed: "
+                        f"{df.shape[0]} bệnh nhân, {df.shape[1]} cột"
+                    )
+                except Exception as e:
+                    st.sidebar.error(f"Lỗi tiền xử lý _vn: {e}")
+                    return
+            else:
+                df = df_raw
+                st.session_state['is_vn'] = False
+                st.session_state['maxn_to_tenxn'] = {}
+                st.sidebar.success(f"✅ Uploaded dataset: {df.shape[0]} rows, {df.shape[1]} columns")
         else:
             st.sidebar.info("Please upload a CSV file")
             return
@@ -333,13 +351,26 @@ def main():
         df.columns.tolist(),
         index=df.columns.tolist().index(detected_target) if detected_target in df.columns else 0
     )
-    
+
+    # Feature selection
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔬 Feature Selection")
+    available_features = [c for c in df.columns if c != target_col]
+    selected_features_sidebar = st.sidebar.multiselect(
+        "Chọn features để train:",
+        available_features,
+        default=available_features
+    )
+    if not selected_features_sidebar:
+        st.sidebar.warning("⚠️ Chưa chọn feature nào!")
+        selected_features_sidebar = available_features
+
     # Preprocessing options
     st.sidebar.markdown("---")
     st.sidebar.subheader("🔧 Preprocessing Options")
     missing_strategy = st.sidebar.selectbox(
         "Missing value strategy:",
-        ["mean", "median", "drop"]
+        ["mean", "median", "knn", "drop"]
     )
     
     scaling_method = st.sidebar.selectbox(
@@ -366,14 +397,14 @@ def main():
     )
     
     # Main content tabs
-    tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    tab0, tab1, tab2, tab3, tab4, tab5, tab7 = st.tabs([
         "🏠 Home",
         "📊 Data Overview",
         "🔍 EDA",
         "🤖 Model Training",
         "📈 Results",
         "📄 Report",
-        "📚 Model Explanation",
+        # "📚 Model Explanation",  # ẩn tab
         "🔮 Prediction Demo"
     ])
 
@@ -435,7 +466,13 @@ def main():
         # Display first 100 rows
         st.subheader("Data Preview (First 100 rows)")
         st.dataframe(df.head(100))
-        
+
+        # Data after missing value handling
+        st.subheader("Data sau xử lý Missing Value")
+        df_preview_clean = preprocessor.handle_missing_values(df.copy(), strategy=missing_strategy)
+        st.caption(f"Strategy: **{missing_strategy}** — {df_preview_clean.shape[0]} hàng × {df_preview_clean.shape[1]} cột")
+        st.dataframe(df_preview_clean.head(100))
+
         # Data summary
         st.subheader("Statistical Summary")
         st.dataframe(df.describe())
@@ -528,16 +565,18 @@ def main():
 
         # --- Step 1: Feature Selection ---
         st.markdown("### Step 1: Choose Feature Set")
+        is_vn = st.session_state.get('is_vn', False)
+        feature_options = ["ACO-selected features", "All features"] if is_vn else ["ACO-selected features", "Baseline", "All features"]
         feature_mode = st.radio(
             "Feature set to use for training:",
-            ["ACO-selected features", "Baseline", "All features"],
+            feature_options,
             horizontal=True,
         )
 
         if feature_mode == "ACO-selected features":
             if st.button("🐜 Run ACO Feature Selection"):
                 df_temp = preprocessor.handle_missing_values(df, strategy=missing_strategy)
-                _run_aco_selection(df_temp, target_col)
+                _run_aco_selection(df_temp, target_col, feature_pool=selected_features_sidebar)
 
             if 'aco_features' in st.session_state:
                 aco_feats = st.session_state['aco_features']
@@ -573,7 +612,7 @@ def main():
                     st.stop()
                 feature_list = st.session_state['aco_features']
             else:  # All features
-                feature_list = [c for c in df.columns if c != target_col]
+                feature_list = selected_features_sidebar
 
             with st.spinner("Processing data..."):
                 df_clean = preprocessor.handle_missing_values(df, strategy=missing_strategy)
@@ -619,25 +658,30 @@ def main():
 
 
         # --- Feature Set Comparison ---
-        st.markdown("---")
-        st.markdown("### 📊 Compare All Feature Sets")
-        st.caption("Train models on Baseline / ACO / All features side-by-side to find the best feature set.")
+        if not is_vn:
+          st.markdown("---")
+          st.markdown("### 📊 Compare All Feature Sets")
+          st.caption("Train models on Baseline / ACO / All features side-by-side to find the best feature set.")
 
-        if 'aco_features' not in st.session_state:
-            st.info("🔔 Run **ACO Feature Selection** first (Step 1 → select ACO → click Run ACO).")
-        else:
-            if st.button("⚡ Run Feature Set Comparison"):
-                paper_features = ['sex', 'chest pain type', 'fasting blood sugar',
-                                  'resting ecg', 'exercise angina', 'ST slope']
-                df_temp = preprocessor.handle_missing_values(df, strategy=missing_strategy)
-                baseline_feats = [f for f in paper_features if f in df_temp.columns]
-                aco_feats = st.session_state['aco_features']
-                with st.spinner("Training all models on 3 feature sets... this may take a minute."):
-                    comparison = compare_all_feature_sets(df_temp, target_col, baseline_feats, aco_feats, random_state=201)
-                st.session_state['feature_comparison'] = comparison
+        if not is_vn:
+            if 'aco_features' not in st.session_state:
+                st.info("🔔 Run **ACO Feature Selection** first (Step 1 → select ACO → click Run ACO).")
+            else:
+                if st.button("⚡ Run Feature Set Comparison"):
+                    paper_features = ['sex', 'chest pain type', 'fasting blood sugar',
+                                      'resting ecg', 'exercise angina', 'ST slope']
+                    df_temp = preprocessor.handle_missing_values(df, strategy=missing_strategy)
+                    # Filter df_temp to only the sidebar-selected features + target
+                    keep_cols = [c for c in selected_features_sidebar if c in df_temp.columns] + [target_col]
+                    df_temp = df_temp[keep_cols]
+                    baseline_feats = [f for f in paper_features if f in df_temp.columns]
+                    aco_feats = [f for f in st.session_state['aco_features'] if f in df_temp.columns]
+                    with st.spinner("Training all models on 3 feature sets... this may take a minute."):
+                        comparison = compare_all_feature_sets(df_temp, target_col, baseline_feats, aco_feats, random_state=201)
+                    st.session_state['feature_comparison'] = comparison
 
-            if 'feature_comparison' in st.session_state:
-                _show_feature_comparison(st.session_state['feature_comparison'])
+                if 'feature_comparison' in st.session_state:
+                    _show_feature_comparison(st.session_state['feature_comparison'])
 
     # Tab 4: Results
     with tab4:
@@ -982,369 +1026,369 @@ def main():
                             mime="application/pdf"
                         )
 
-    # Tab 6: Model Explanation
-    with tab6:
-        st.markdown('<div class="sub-header">Code Implementation - Machine Learning Models</div>', unsafe_allow_html=True)
-        st.write("Chi tiết cách triển khai code cho từng model trong project này (file `models.py`).")
+#     # Tab 6: Model Explanation
+#     with tab6:
+#         st.markdown('<div class="sub-header">Code Implementation - Machine Learning Models</div>', unsafe_allow_html=True)
+#         st.write("Chi tiết cách triển khai code cho từng model trong project này (file `models.py`).")
 
-        if 'results' not in st.session_state:
-            st.warning("⚠️ Vui lòng chạy Training Pipeline trước để xem giải thích mô hình.")
-            st.info("👈 Đi đến tab 'Model Training' và click 'Start Training Pipeline'")
-        else:
+#         if 'results' not in st.session_state:
+#             st.warning("⚠️ Vui lòng chạy Training Pipeline trước để xem giải thích mô hình.")
+#             st.info("👈 Đi đến tab 'Model Training' và click 'Start Training Pipeline'")
+#         else:
 
-            # Model implementation details based on actual code
-            model_implementations = {
-                "Logistic Regression": {
-                    "sklearn_class": "LogisticRegression",
-                    "import_from": "sklearn.linear_model",
-                    "code": """LogisticRegression(
-        random_state=123,
-        max_iter=1000
-    )""",
-                    "parameters": {
-                        "random_state=123": "Đảm bảo kết quả có thể tái tạo được (reproducibility)",
-                        "max_iter=1000": "Số lần lặp tối đa để thuật toán hội tụ (mặc định là 100, tăng lên 1000 để đảm bảo hội tụ)"
-                    },
-                    "explanation": """
-    **Cách hoạt động trong code:**
-    1. Model sử dụng hàm sigmoid để chuyển đổi output thành xác suất (0-1)
-    2. Tối ưu hóa bằng thuật toán LBFGS (Limited-memory Broyden-Fletcher-Goldfarb-Shanno)
-    3. `max_iter=1000` cho phép thuật toán có đủ thời gian hội tụ với dữ liệu phức tạp
-    4. Output: `predict_proba()` trả về xác suất, `predict()` trả về class (0 hoặc 1)
-    """
-                },
-                "Random Forest": {
-                    "sklearn_class": "RandomForestClassifier",
-                    "import_from": "sklearn.ensemble",
-                    "code": """RandomForestClassifier(
-        n_estimators=100,
-        random_state=123,
-        n_jobs=-1
-    )""",
-                    "parameters": {
-                        "n_estimators=100": "Số lượng decision trees trong forest (100 cây)",
-                        "random_state=123": "Seed cho random number generator để reproducibility",
-                        "n_jobs=-1": "Sử dụng tất cả CPU cores để training song song (tăng tốc độ)"
-                    },
-                    "explanation": """
-    **Cách hoạt động trong code:**
-    1. Tạo 100 decision trees, mỗi cây được train trên một bootstrap sample khác nhau
-    2. Mỗi cây chỉ xem xét một subset ngẫu nhiên của features tại mỗi split
-    3. `n_jobs=-1` cho phép train tất cả 100 cây song song trên nhiều CPU cores
-    4. Prediction: Majority voting từ 100 cây để quyết định class cuối cùng
-    5. `predict_proba()`: Tỷ lệ số cây vote cho mỗi class
-    """
-                },
-                "SVM": {
-                    "sklearn_class": "SVC",
-                    "import_from": "sklearn.svm",
-                    "code": """SVC(
-        probability=True,
-        random_state=123
-    )""",
-                    "parameters": {
-                        "probability=True": "Cho phép tính xác suất prediction (cần cho ROC-AUC). Sử dụng Platt scaling",
-                        "random_state=123": "Seed cho probability calibration"
-                    },
-                    "explanation": """
-    **Cách hoạt động trong code:**
-    1. Sử dụng kernel RBF (Radial Basis Function) mặc định
-    2. Tìm hyperplane tối ưu để phân tách 2 classes với margin lớn nhất
-    3. `probability=True`: Áp dụng Platt scaling để chuyển đổi distance thành probability
-    4. Lưu ý: Bật probability làm chậm training vì cần 5-fold CV nội bộ
-    5. Default C=1.0 (regularization parameter)
-    """
-                },
-                "KNN": {
-                    "sklearn_class": "KNeighborsClassifier",
-                    "import_from": "sklearn.neighbors",
-                    "code": """KNeighborsClassifier(
-        n_neighbors=5,
-        n_jobs=-1
-    )""",
-                    "parameters": {
-                        "n_neighbors=5": "Số láng giềng gần nhất để vote (K=5)",
-                        "n_jobs=-1": "Sử dụng tất cả CPU cores cho prediction"
-                    },
-                    "explanation": """
-    **Cách hoạt động trong code:**
-    1. Không có training phase thực sự - chỉ lưu trữ data
-    2. Khi predict: Tính khoảng cách Euclidean đến tất cả training points
-    3. Chọn 5 điểm gần nhất, majority voting để quyết định class
-    4. `predict_proba()`: Tỷ lệ số neighbors thuộc mỗi class (vd: 3/5 = 0.6)
-    5. K=5 là giá trị phổ biến, cân bằng giữa bias và variance
-    """
-                },
-                "GBM": {
-                    "sklearn_class": "GradientBoostingClassifier",
-                    "import_from": "sklearn.ensemble",
-                    "code": """GradientBoostingClassifier(
-        n_estimators=100,
-        random_state=123
-    )""",
-                    "parameters": {
-                        "n_estimators=100": "Số lượng boosting stages (100 cây tuần tự)",
-                        "random_state=123": "Seed cho reproducibility"
-                    },
-                    "explanation": """
-    **Cách hoạt động trong code:**
-    1. Bắt đầu với prediction ban đầu (log-odds của class distribution)
-    2. Train 100 cây tuần tự, mỗi cây học từ residual errors của cây trước
-    3. Mỗi cây mới cố gắng sửa lỗi của ensemble hiện tại
-    4. Default learning_rate=0.1: Mỗi cây đóng góp 10% vào prediction
-    5. Default max_depth=3: Mỗi cây là "weak learner" với độ sâu thấp
-    6. Không hỗ trợ parallel training (tuần tự)
-    """
-                },
-                "Neural Network": {
-                    "sklearn_class": "MLPClassifier",
-                    "import_from": "sklearn.neural_network",
-                    "code": """MLPClassifier(
-        hidden_layer_sizes=(100, 50),
-        random_state=123,
-        max_iter=500
-    )""",
-                    "parameters": {
-                        "hidden_layer_sizes=(100, 50)": "2 hidden layers: Layer 1 có 100 neurons, Layer 2 có 50 neurons",
-                        "random_state=123": "Seed cho weight initialization",
-                        "max_iter=500": "Số epochs tối đa để training"
-                    },
-                    "explanation": """
-    **Cách hoạt động trong code:**
-    1. Architecture: Input → 100 neurons → 50 neurons → Output (2 classes)
-    2. Default activation: ReLU cho hidden layers, Softmax cho output
-    3. Default optimizer: Adam (adaptive learning rate)
-    4. Default batch_size: 200 (mini-batch gradient descent)
-    5. Backpropagation để update weights qua 500 epochs (hoặc đến khi hội tụ)
-    6. Output: Softmax probabilities cho mỗi class
-    """
-                },
-                "XGBoost": {
-                    "sklearn_class": "XGBClassifier",
-                    "import_from": "xgboost",
-                    "code": """xgb.XGBClassifier(
-        n_estimators=100,
-        random_state=123,
-        n_jobs=-1,
-        eval_metric='logloss'
-    )""",
-                    "parameters": {
-                        "n_estimators=100": "Số lượng boosting rounds (100 cây)",
-                        "random_state=123": "Seed cho reproducibility",
-                        "n_jobs=-1": "Sử dụng tất cả CPU cores",
-                        "eval_metric='logloss'": "Metric để đánh giá: Binary cross-entropy loss"
-                    },
-                    "explanation": """
-    **Cách hoạt động trong code:**
-    1. Gradient Boosting với regularization (L1 + L2)
-    2. Sử dụng second-order gradient (Hessian) để tối ưu tốt hơn
-    3. `n_jobs=-1`: Parallel tree construction (nhanh hơn sklearn GBM)
-    4. Tự động xử lý missing values
-    5. Default max_depth=6: Cây sâu hơn GBM nhưng có regularization
-    6. `eval_metric='logloss'`: Tối ưu cho binary classification
-    """
-                },
-                "Bagged Tree": {
-                    "sklearn_class": "BaggingClassifier",
-                    "import_from": "sklearn.ensemble",
-                    "code": """BaggingClassifier(
-        estimator=DecisionTreeClassifier(random_state=123),
-        n_estimators=100,
-        random_state=123,
-        n_jobs=-1
-    )""",
-                    "parameters": {
-                        "estimator=DecisionTreeClassifier()": "Base learner: Decision Tree với full depth",
-                        "n_estimators=100": "Số lượng trees trong ensemble (100 cây)",
-                        "random_state=123": "Seed cho bootstrap sampling",
-                        "n_jobs=-1": "Parallel training trên tất cả CPU cores"
-                    },
-                    "explanation": """
-    **Cách hoạt động trong code:**
-    1. Tạo 100 bootstrap samples từ training data (sampling with replacement)
-    2. Train 1 Decision Tree trên mỗi bootstrap sample
-    3. Mỗi cây được train độc lập → có thể parallel
-    4. Khác với Random Forest: Sử dụng TẤT CẢ features tại mỗi split
-    5. Prediction: Majority voting từ 100 cây
-    6. Giảm variance nhưng không giảm bias
-    """
-                },
-                "Naive Bayes": {
-                    "sklearn_class": "GaussianNB",
-                    "import_from": "sklearn.naive_bayes",
-                    "code": """GaussianNB()""",
-                    "parameters": {
-                        "(no parameters)": "Sử dụng default settings, không cần hyperparameter tuning"
-                    },
-                    "explanation": """
-    **Cách hoạt động trong code:**
-    1. Giả định mỗi feature tuân theo phân phối Gaussian (Normal distribution)
-    2. Tính mean và variance của mỗi feature cho mỗi class
-    3. Áp dụng Bayes theorem: P(class|features) ∝ P(features|class) × P(class)
-    4. Giả định "naive": Các features độc lập với nhau given class
-    5. Training rất nhanh: Chỉ cần tính mean/variance
-    6. `predict_proba()`: Normalized posterior probabilities
-    """
-                },
-                "FDA": {
-                    "sklearn_class": "Pipeline([PolynomialFeatures, LinearDiscriminantAnalysis])",
-                    "import_from": "sklearn.pipeline / sklearn.preprocessing / sklearn.discriminant_analysis",
-                    "code": """Pipeline([
-        ('basis', PolynomialFeatures(degree=2, include_bias=False)),
-        ('lda', LinearDiscriminantAnalysis())
-    ])""",
-                    "parameters": {
-                        "PolynomialFeatures(degree=2)": "Tạo basis expansions bậc 2 (x², x·y, ...) — mô phỏng non-linear correlations của FDA",
-                        "include_bias=False": "Không thêm bias term (hằng số)",
-                        "LinearDiscriminantAnalysis()": "Phân tích discriminant trên không gian đã mở rộng"
-                    },
-                    "explanation": """
-    **Cách hoạt động trong code:**
-    1. FDA = LDA + non-linear basis expansions (định nghĩa từ paper)
-    2. Bước 1 (PolynomialFeatures): Tạo các features mới x², x·y, ... từ features gốc
-    3. Bước 2 (LDA): Tìm discriminant functions trên không gian đã mở rộng
-    4. sklearn không có native FDA → dùng Pipeline để mô phỏng
-    5. True FDA (MARS-based) cần thư viện pyearth, không tương thích Python 3.12+
-    """
-                },
-                "MANN": {
-                    "sklearn_class": "VotingClassifier (5x MLPClassifier)",
-                    "import_from": "sklearn.ensemble / sklearn.neural_network",
-                    "code": """VotingClassifier(
-        estimators=[
-            ('mlp1', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=123,   max_iter=500)),
-            ('mlp2', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=124, max_iter=500)),
-            ('mlp3', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=125, max_iter=500)),
-            ('mlp4', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=126, max_iter=500)),
-            ('mlp5', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=127, max_iter=500)),
-        ],
-        voting='soft',
-    )""",
-                    "parameters": {
-                        "5x MLPClassifier": "5 neural networks độc lập, mỗi cái khởi tạo với random_state khác nhau",
-                        "hidden_layer_sizes=(100, 50)": "Mỗi network có 2 hidden layers: 100 và 50 neurons",
-                        "voting='soft'": "Average xác suất từ 5 networks (thay vì majority voting)"
-                    },
-                    "explanation": """
-    **Cách hoạt động trong code:**
-    1. Train 5 MLPs với initialization khác nhau (random_state 123→127)
-    2. Mỗi MLP học từ cùng training data nhưng khởi đầu khác nhau → diversity
-    3. `voting='soft'`: Prediction cuối = trung bình xác suất từ 5 networks
-    4. Giảm variance so với 1 MLP duy nhất (ensemble effect)
-    5. Đúng với định nghĩa MANN: ensemble technique combines individual model strengths
-    """
-                },
-                "CIT": {
-                    "sklearn_class": "DecisionTreeClassifier",
-                    "import_from": "sklearn.tree",
-                    "code": """DecisionTreeClassifier(
-        random_state=123,
-        criterion='entropy',
-        min_samples_split=20,
-        min_samples_leaf=10,
-        ccp_alpha=0.005
-    )""",
-                    "parameters": {
-                        "criterion='entropy'": "Sử dụng Information Gain để chọn splits",
-                        "min_samples_split=20": "Tối thiểu 20 mẫu để tách node (giống ngưỡng significance testing của CIT)",
-                        "min_samples_leaf=10": "Tối thiểu 10 mẫu trong mỗi leaf",
-                        "ccp_alpha=0.005": "Cost-complexity pruning để tránh overfitting (giống CIT)"
-                    },
-                    "explanation": """
-    **Cách hoạt động trong code:**
-    1. CIT thực sự dùng hypothesis testing (permutation test) để chọn splits
-    2. sklearn không có native CIT → dùng pruned Decision Tree như approximation
-    3. `min_samples_split/leaf`: Yêu cầu đủ mẫu → giảm overfitting như CIT
-    4. `ccp_alpha`: Cost-complexity pruning → tránh overfitting như CIT
-    5. True CIT chỉ có trong R (package partykit, hàm ctree())
-    """
-                }
-            }
+#             # Model implementation details based on actual code
+#             model_implementations = {
+#                 "Logistic Regression": {
+#                     "sklearn_class": "LogisticRegression",
+#                     "import_from": "sklearn.linear_model",
+#                     "code": """LogisticRegression(
+#         random_state=123,
+#         max_iter=1000
+#     )""",
+#                     "parameters": {
+#                         "random_state=123": "Đảm bảo kết quả có thể tái tạo được (reproducibility)",
+#                         "max_iter=1000": "Số lần lặp tối đa để thuật toán hội tụ (mặc định là 100, tăng lên 1000 để đảm bảo hội tụ)"
+#                     },
+#                     "explanation": """
+#     **Cách hoạt động trong code:**
+#     1. Model sử dụng hàm sigmoid để chuyển đổi output thành xác suất (0-1)
+#     2. Tối ưu hóa bằng thuật toán LBFGS (Limited-memory Broyden-Fletcher-Goldfarb-Shanno)
+#     3. `max_iter=1000` cho phép thuật toán có đủ thời gian hội tụ với dữ liệu phức tạp
+#     4. Output: `predict_proba()` trả về xác suất, `predict()` trả về class (0 hoặc 1)
+#     """
+#                 },
+#                 "Random Forest": {
+#                     "sklearn_class": "RandomForestClassifier",
+#                     "import_from": "sklearn.ensemble",
+#                     "code": """RandomForestClassifier(
+#         n_estimators=100,
+#         random_state=123,
+#         n_jobs=-1
+#     )""",
+#                     "parameters": {
+#                         "n_estimators=100": "Số lượng decision trees trong forest (100 cây)",
+#                         "random_state=123": "Seed cho random number generator để reproducibility",
+#                         "n_jobs=-1": "Sử dụng tất cả CPU cores để training song song (tăng tốc độ)"
+#                     },
+#                     "explanation": """
+#     **Cách hoạt động trong code:**
+#     1. Tạo 100 decision trees, mỗi cây được train trên một bootstrap sample khác nhau
+#     2. Mỗi cây chỉ xem xét một subset ngẫu nhiên của features tại mỗi split
+#     3. `n_jobs=-1` cho phép train tất cả 100 cây song song trên nhiều CPU cores
+#     4. Prediction: Majority voting từ 100 cây để quyết định class cuối cùng
+#     5. `predict_proba()`: Tỷ lệ số cây vote cho mỗi class
+#     """
+#                 },
+#                 "SVM": {
+#                     "sklearn_class": "SVC",
+#                     "import_from": "sklearn.svm",
+#                     "code": """SVC(
+#         probability=True,
+#         random_state=123
+#     )""",
+#                     "parameters": {
+#                         "probability=True": "Cho phép tính xác suất prediction (cần cho ROC-AUC). Sử dụng Platt scaling",
+#                         "random_state=123": "Seed cho probability calibration"
+#                     },
+#                     "explanation": """
+#     **Cách hoạt động trong code:**
+#     1. Sử dụng kernel RBF (Radial Basis Function) mặc định
+#     2. Tìm hyperplane tối ưu để phân tách 2 classes với margin lớn nhất
+#     3. `probability=True`: Áp dụng Platt scaling để chuyển đổi distance thành probability
+#     4. Lưu ý: Bật probability làm chậm training vì cần 5-fold CV nội bộ
+#     5. Default C=1.0 (regularization parameter)
+#     """
+#                 },
+#                 "KNN": {
+#                     "sklearn_class": "KNeighborsClassifier",
+#                     "import_from": "sklearn.neighbors",
+#                     "code": """KNeighborsClassifier(
+#         n_neighbors=5,
+#         n_jobs=-1
+#     )""",
+#                     "parameters": {
+#                         "n_neighbors=5": "Số láng giềng gần nhất để vote (K=5)",
+#                         "n_jobs=-1": "Sử dụng tất cả CPU cores cho prediction"
+#                     },
+#                     "explanation": """
+#     **Cách hoạt động trong code:**
+#     1. Không có training phase thực sự - chỉ lưu trữ data
+#     2. Khi predict: Tính khoảng cách Euclidean đến tất cả training points
+#     3. Chọn 5 điểm gần nhất, majority voting để quyết định class
+#     4. `predict_proba()`: Tỷ lệ số neighbors thuộc mỗi class (vd: 3/5 = 0.6)
+#     5. K=5 là giá trị phổ biến, cân bằng giữa bias và variance
+#     """
+#                 },
+#                 "GBM": {
+#                     "sklearn_class": "GradientBoostingClassifier",
+#                     "import_from": "sklearn.ensemble",
+#                     "code": """GradientBoostingClassifier(
+#         n_estimators=100,
+#         random_state=123
+#     )""",
+#                     "parameters": {
+#                         "n_estimators=100": "Số lượng boosting stages (100 cây tuần tự)",
+#                         "random_state=123": "Seed cho reproducibility"
+#                     },
+#                     "explanation": """
+#     **Cách hoạt động trong code:**
+#     1. Bắt đầu với prediction ban đầu (log-odds của class distribution)
+#     2. Train 100 cây tuần tự, mỗi cây học từ residual errors của cây trước
+#     3. Mỗi cây mới cố gắng sửa lỗi của ensemble hiện tại
+#     4. Default learning_rate=0.1: Mỗi cây đóng góp 10% vào prediction
+#     5. Default max_depth=3: Mỗi cây là "weak learner" với độ sâu thấp
+#     6. Không hỗ trợ parallel training (tuần tự)
+#     """
+#                 },
+#                 "Neural Network": {
+#                     "sklearn_class": "MLPClassifier",
+#                     "import_from": "sklearn.neural_network",
+#                     "code": """MLPClassifier(
+#         hidden_layer_sizes=(100, 50),
+#         random_state=123,
+#         max_iter=500
+#     )""",
+#                     "parameters": {
+#                         "hidden_layer_sizes=(100, 50)": "2 hidden layers: Layer 1 có 100 neurons, Layer 2 có 50 neurons",
+#                         "random_state=123": "Seed cho weight initialization",
+#                         "max_iter=500": "Số epochs tối đa để training"
+#                     },
+#                     "explanation": """
+#     **Cách hoạt động trong code:**
+#     1. Architecture: Input → 100 neurons → 50 neurons → Output (2 classes)
+#     2. Default activation: ReLU cho hidden layers, Softmax cho output
+#     3. Default optimizer: Adam (adaptive learning rate)
+#     4. Default batch_size: 200 (mini-batch gradient descent)
+#     5. Backpropagation để update weights qua 500 epochs (hoặc đến khi hội tụ)
+#     6. Output: Softmax probabilities cho mỗi class
+#     """
+#                 },
+#                 "XGBoost": {
+#                     "sklearn_class": "XGBClassifier",
+#                     "import_from": "xgboost",
+#                     "code": """xgb.XGBClassifier(
+#         n_estimators=100,
+#         random_state=123,
+#         n_jobs=-1,
+#         eval_metric='logloss'
+#     )""",
+#                     "parameters": {
+#                         "n_estimators=100": "Số lượng boosting rounds (100 cây)",
+#                         "random_state=123": "Seed cho reproducibility",
+#                         "n_jobs=-1": "Sử dụng tất cả CPU cores",
+#                         "eval_metric='logloss'": "Metric để đánh giá: Binary cross-entropy loss"
+#                     },
+#                     "explanation": """
+#     **Cách hoạt động trong code:**
+#     1. Gradient Boosting với regularization (L1 + L2)
+#     2. Sử dụng second-order gradient (Hessian) để tối ưu tốt hơn
+#     3. `n_jobs=-1`: Parallel tree construction (nhanh hơn sklearn GBM)
+#     4. Tự động xử lý missing values
+#     5. Default max_depth=6: Cây sâu hơn GBM nhưng có regularization
+#     6. `eval_metric='logloss'`: Tối ưu cho binary classification
+#     """
+#                 },
+#                 "Bagged Tree": {
+#                     "sklearn_class": "BaggingClassifier",
+#                     "import_from": "sklearn.ensemble",
+#                     "code": """BaggingClassifier(
+#         estimator=DecisionTreeClassifier(random_state=123),
+#         n_estimators=100,
+#         random_state=123,
+#         n_jobs=-1
+#     )""",
+#                     "parameters": {
+#                         "estimator=DecisionTreeClassifier()": "Base learner: Decision Tree với full depth",
+#                         "n_estimators=100": "Số lượng trees trong ensemble (100 cây)",
+#                         "random_state=123": "Seed cho bootstrap sampling",
+#                         "n_jobs=-1": "Parallel training trên tất cả CPU cores"
+#                     },
+#                     "explanation": """
+#     **Cách hoạt động trong code:**
+#     1. Tạo 100 bootstrap samples từ training data (sampling with replacement)
+#     2. Train 1 Decision Tree trên mỗi bootstrap sample
+#     3. Mỗi cây được train độc lập → có thể parallel
+#     4. Khác với Random Forest: Sử dụng TẤT CẢ features tại mỗi split
+#     5. Prediction: Majority voting từ 100 cây
+#     6. Giảm variance nhưng không giảm bias
+#     """
+#                 },
+#                 "Naive Bayes": {
+#                     "sklearn_class": "GaussianNB",
+#                     "import_from": "sklearn.naive_bayes",
+#                     "code": """GaussianNB()""",
+#                     "parameters": {
+#                         "(no parameters)": "Sử dụng default settings, không cần hyperparameter tuning"
+#                     },
+#                     "explanation": """
+#     **Cách hoạt động trong code:**
+#     1. Giả định mỗi feature tuân theo phân phối Gaussian (Normal distribution)
+#     2. Tính mean và variance của mỗi feature cho mỗi class
+#     3. Áp dụng Bayes theorem: P(class|features) ∝ P(features|class) × P(class)
+#     4. Giả định "naive": Các features độc lập với nhau given class
+#     5. Training rất nhanh: Chỉ cần tính mean/variance
+#     6. `predict_proba()`: Normalized posterior probabilities
+#     """
+#                 },
+#                 "FDA": {
+#                     "sklearn_class": "Pipeline([PolynomialFeatures, LinearDiscriminantAnalysis])",
+#                     "import_from": "sklearn.pipeline / sklearn.preprocessing / sklearn.discriminant_analysis",
+#                     "code": """Pipeline([
+#         ('basis', PolynomialFeatures(degree=2, include_bias=False)),
+#         ('lda', LinearDiscriminantAnalysis())
+#     ])""",
+#                     "parameters": {
+#                         "PolynomialFeatures(degree=2)": "Tạo basis expansions bậc 2 (x², x·y, ...) — mô phỏng non-linear correlations của FDA",
+#                         "include_bias=False": "Không thêm bias term (hằng số)",
+#                         "LinearDiscriminantAnalysis()": "Phân tích discriminant trên không gian đã mở rộng"
+#                     },
+#                     "explanation": """
+#     **Cách hoạt động trong code:**
+#     1. FDA = LDA + non-linear basis expansions (định nghĩa từ paper)
+#     2. Bước 1 (PolynomialFeatures): Tạo các features mới x², x·y, ... từ features gốc
+#     3. Bước 2 (LDA): Tìm discriminant functions trên không gian đã mở rộng
+#     4. sklearn không có native FDA → dùng Pipeline để mô phỏng
+#     5. True FDA (MARS-based) cần thư viện pyearth, không tương thích Python 3.12+
+#     """
+#                 },
+#                 "MANN": {
+#                     "sklearn_class": "VotingClassifier (5x MLPClassifier)",
+#                     "import_from": "sklearn.ensemble / sklearn.neural_network",
+#                     "code": """VotingClassifier(
+#         estimators=[
+#             ('mlp1', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=123,   max_iter=500)),
+#             ('mlp2', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=124, max_iter=500)),
+#             ('mlp3', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=125, max_iter=500)),
+#             ('mlp4', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=126, max_iter=500)),
+#             ('mlp5', MLPClassifier(hidden_layer_sizes=(100, 50), random_state=127, max_iter=500)),
+#         ],
+#         voting='soft',
+#     )""",
+#                     "parameters": {
+#                         "5x MLPClassifier": "5 neural networks độc lập, mỗi cái khởi tạo với random_state khác nhau",
+#                         "hidden_layer_sizes=(100, 50)": "Mỗi network có 2 hidden layers: 100 và 50 neurons",
+#                         "voting='soft'": "Average xác suất từ 5 networks (thay vì majority voting)"
+#                     },
+#                     "explanation": """
+#     **Cách hoạt động trong code:**
+#     1. Train 5 MLPs với initialization khác nhau (random_state 123→127)
+#     2. Mỗi MLP học từ cùng training data nhưng khởi đầu khác nhau → diversity
+#     3. `voting='soft'`: Prediction cuối = trung bình xác suất từ 5 networks
+#     4. Giảm variance so với 1 MLP duy nhất (ensemble effect)
+#     5. Đúng với định nghĩa MANN: ensemble technique combines individual model strengths
+#     """
+#                 },
+#                 "CIT": {
+#                     "sklearn_class": "DecisionTreeClassifier",
+#                     "import_from": "sklearn.tree",
+#                     "code": """DecisionTreeClassifier(
+#         random_state=123,
+#         criterion='entropy',
+#         min_samples_split=20,
+#         min_samples_leaf=10,
+#         ccp_alpha=0.005
+#     )""",
+#                     "parameters": {
+#                         "criterion='entropy'": "Sử dụng Information Gain để chọn splits",
+#                         "min_samples_split=20": "Tối thiểu 20 mẫu để tách node (giống ngưỡng significance testing của CIT)",
+#                         "min_samples_leaf=10": "Tối thiểu 10 mẫu trong mỗi leaf",
+#                         "ccp_alpha=0.005": "Cost-complexity pruning để tránh overfitting (giống CIT)"
+#                     },
+#                     "explanation": """
+#     **Cách hoạt động trong code:**
+#     1. CIT thực sự dùng hypothesis testing (permutation test) để chọn splits
+#     2. sklearn không có native CIT → dùng pruned Decision Tree như approximation
+#     3. `min_samples_split/leaf`: Yêu cầu đủ mẫu → giảm overfitting như CIT
+#     4. `ccp_alpha`: Cost-complexity pruning → tránh overfitting như CIT
+#     5. True CIT chỉ có trong R (package partykit, hàm ctree())
+#     """
+#                 }
+#             }
 
-            # Create selection for model
-            selected_model = st.selectbox(
-                "Chọn model để xem chi tiết implementation:",
-                list(model_implementations.keys())
-            )
+#             # Create selection for model
+#             selected_model = st.selectbox(
+#                 "Chọn model để xem chi tiết implementation:",
+#                 list(model_implementations.keys())
+#             )
 
-            if selected_model:
-                impl = model_implementations[selected_model]
+#             if selected_model:
+#                 impl = model_implementations[selected_model]
 
-                # Display implementation details
-                st.markdown(f"### {selected_model}")
-                st.markdown(f"**Library:** `{impl['import_from']}`")
-                st.markdown(f"**Class:** `{impl['sklearn_class']}`")
+#                 # Display implementation details
+#                 st.markdown(f"### {selected_model}")
+#                 st.markdown(f"**Library:** `{impl['import_from']}`")
+#                 st.markdown(f"**Class:** `{impl['sklearn_class']}`")
 
-                # Code block
-                st.markdown("#### Code Implementation")
-                st.code(impl['code'], language='python')
+#                 # Code block
+#                 st.markdown("#### Code Implementation")
+#                 st.code(impl['code'], language='python')
 
-                # Parameters explanation
-                st.markdown("#### Giải thích Parameters")
-                for param, desc in impl['parameters'].items():
-                    st.markdown(f"- **`{param}`**: {desc}")
+#                 # Parameters explanation
+#                 st.markdown("#### Giải thích Parameters")
+#                 for param, desc in impl['parameters'].items():
+#                     st.markdown(f"- **`{param}`**: {desc}")
 
-                # How it works in this project
-                st.markdown("#### Cách hoạt động trong Project")
-                st.markdown(impl['explanation'])
+#                 # How it works in this project
+#                 st.markdown("#### Cách hoạt động trong Project")
+#                 st.markdown(impl['explanation'])
 
-                # Training and evaluation code
-                st.markdown("#### Code Training & Evaluation")
-                st.code("""# Training (trong models.py)
-    model.fit(X_train, y_train)
+#                 # Training and evaluation code
+#                 st.markdown("#### Code Training & Evaluation")
+#                 st.code("""# Training (trong models.py)
+#     model.fit(X_train, y_train)
 
-    # Prediction
-    y_pred = model.predict(X_test)
+#     # Prediction
+#     y_pred = model.predict(X_test)
 
-    # Get probabilities for ROC-AUC
-    y_proba = model.predict_proba(X_test)[:, 1]
+#     # Get probabilities for ROC-AUC
+#     y_proba = model.predict_proba(X_test)[:, 1]
 
-    # Calculate metrics
-    accuracy = accuracy_score(y_test, y_pred)
-    precision = precision_score(y_test, y_pred)
-    recall = recall_score(y_test, y_pred)
-    f1 = f1_score(y_test, y_pred)
-    roc_auc = roc_auc_score(y_test, y_proba)""", language='python')
+#     # Calculate metrics
+#     accuracy = accuracy_score(y_test, y_pred)
+#     precision = precision_score(y_test, y_pred)
+#     recall = recall_score(y_test, y_pred)
+#     f1 = f1_score(y_test, y_pred)
+#     roc_auc = roc_auc_score(y_test, y_proba)""", language='python')
 
-            # Summary table
-            st.markdown("---")
-            st.markdown("### Tổng hợp: Tất cả Models trong Project")
+#             # Summary table
+#             st.markdown("---")
+#             st.markdown("### Tổng hợp: Tất cả Models trong Project")
 
-            summary_data = []
-            for model_name, impl in model_implementations.items():
-                # Extract key parameter
-                params = list(impl['parameters'].keys())
-                key_param = params[0] if params else "default"
-                summary_data.append({
-                    "Model": model_name,
-                    "Class": impl['sklearn_class'],
-                    "Library": impl['import_from'].split('.')[-1],
-                    "Key Parameter": key_param
-                })
+#             summary_data = []
+#             for model_name, impl in model_implementations.items():
+#                 # Extract key parameter
+#                 params = list(impl['parameters'].keys())
+#                 key_param = params[0] if params else "default"
+#                 summary_data.append({
+#                     "Model": model_name,
+#                     "Class": impl['sklearn_class'],
+#                     "Library": impl['import_from'].split('.')[-1],
+#                     "Key Parameter": key_param
+#                 })
 
-            summary_df = pd.DataFrame(summary_data)
-            st.dataframe(summary_df, hide_index=True)
+#             summary_df = pd.DataFrame(summary_data)
+#             st.dataframe(summary_df, hide_index=True)
 
-            # Cross-validation explanation
-            st.markdown("---")
-            st.markdown("### Cross-Validation Implementation")
-            st.code("""# K-Fold Cross-Validation (trong models.py)
-    from sklearn.model_selection import cross_val_score, StratifiedKFold
+#             # Cross-validation explanation
+#             st.markdown("---")
+#             st.markdown("### Cross-Validation Implementation")
+#             st.code("""# K-Fold Cross-Validation (trong models.py)
+#     from sklearn.model_selection import cross_val_score, StratifiedKFold
 
-    cv = StratifiedKFold(n_splits=k_fold, shuffle=True, random_state=123)
-    scores = cross_val_score(model, X, y, cv=cv, scoring='accuracy', n_jobs=-1)
+#     cv = StratifiedKFold(n_splits=k_fold, shuffle=True, random_state=123)
+#     scores = cross_val_score(model, X, y, cv=cv, scoring='accuracy', n_jobs=-1)
 
-    # Results
-    mean_accuracy = scores.mean()
-    std_accuracy = scores.std()""", language='python')
+#     # Results
+#     mean_accuracy = scores.mean()
+#     std_accuracy = scores.std()""", language='python')
 
-            st.markdown("""
-    **Giải thích:**
-    - `StratifiedKFold`: Đảm bảo mỗi fold có tỷ lệ class giống nhau như data gốc
-    - `shuffle=True`: Trộn data trước khi chia folds
-    - `n_jobs=-1`: Chạy parallel trên tất cả CPU cores
-    - K=5 và K=10: Hai giá trị K phổ biến để đánh giá model stability
-    """)
+#             st.markdown("""
+#     **Giải thích:**
+#     - `StratifiedKFold`: Đảm bảo mỗi fold có tỷ lệ class giống nhau như data gốc
+#     - `shuffle=True`: Trộn data trước khi chia folds
+#     - `n_jobs=-1`: Chạy parallel trên tất cả CPU cores
+#     - K=5 và K=10: Hai giá trị K phổ biến để đánh giá model stability
+#     """)
 
     # Tab 7: Prediction Demo
     with tab7:
@@ -1359,25 +1403,11 @@ def main():
             df_stored = st.session_state.get('df', None)
 
             if df_stored is not None:
-                # Determine feature_cols based on current feature_mode selection
-                _paper_features = ['sex', 'chest pain type', 'fasting blood sugar',
-                                   'resting ecg', 'exercise angina', 'ST slope']
-                if feature_mode == "Baseline":
-                    feature_cols = [f for f in _paper_features if f in df_stored.columns]
-                elif feature_mode == "ACO-selected features":
-                    feature_cols = st.session_state.get(
-                        'aco_features',
-                        [f for f in _paper_features if f in df_stored.columns]
-                    )
-                else:  # All features
-                    feature_cols = [col for col in df_stored.columns if col != target_col]
-
-                # Warn if selected feature set doesn't match what was trained
-                trained_mode = st.session_state.get('trained_feature_mode')
-                if trained_mode and trained_mode != feature_mode:
-                    st.warning(f"⚠️ Form đang hiển thị features cho **{feature_mode}** "
-                               f"nhưng model được train với **{trained_mode}**. "
-                               f"Vui lòng **Train lại** trước khi dự đoán.")
+                # Always use the exact features the model was trained on
+                feature_cols = st.session_state.get('trained_features', [])
+                if not feature_cols:
+                    st.error("Không tìm thấy danh sách features đã train. Vui lòng train lại.")
+                    st.stop()
 
                 # Initialize sample_data in session state if not exists
                 if 'sample_data' not in st.session_state:
@@ -1456,9 +1486,16 @@ def main():
                 # Create input form with 3 columns
                 input_values = {}
                 cols = st.columns(3)
+                maxn_to_tenxn = st.session_state.get('maxn_to_tenxn', {})
 
                 for idx, feature in enumerate(feature_cols):
                     col_idx = idx % 3
+                    # Build display label: "tenxn (maxn)" for _vn files, else just feature name
+                    if maxn_to_tenxn and feature in maxn_to_tenxn:
+                        label = f"{maxn_to_tenxn[feature]} ({feature})"
+                    else:
+                        label = feature
+
                     with cols[col_idx]:
                         min_val = float(df_stored[feature].min())
                         max_val = float(df_stored[feature].max())
@@ -1471,7 +1508,7 @@ def main():
                             if f"input_{feature}" not in st.session_state:
                                 st.session_state[f"input_{feature}"] = options[0]
                             input_values[feature] = st.selectbox(
-                                f"{feature}",
+                                label,
                                 options=options,
                                 help=f"Giá trị: {options}",
                                 key=f"input_{feature}"
@@ -1482,7 +1519,7 @@ def main():
                                 st.session_state[f"input_{feature}"] = int(mean_val) if is_integer else float(mean_val)
                             if is_integer:
                                 input_values[feature] = st.number_input(
-                                    f"{feature}",
+                                    label,
                                     min_value=int(min_val),
                                     max_value=int(max_val * 1.5),
                                     step=1,
@@ -1491,7 +1528,7 @@ def main():
                                 )
                             else:
                                 input_values[feature] = st.number_input(
-                                    f"{feature}",
+                                    label,
                                     min_value=min_val,
                                     max_value=max_val * 1.5,
                                     step=(max_val - min_val) / 100,
