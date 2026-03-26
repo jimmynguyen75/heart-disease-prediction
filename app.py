@@ -7,7 +7,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 from preprocessing import DataPreprocessor, prepare_features_for_aco, preprocess_vn_data
 from models import ModelTrainer
 from report import ThesisReportGenerator
@@ -194,25 +193,41 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def _run_aco_selection(df_clean, target_col, feature_pool=None):
-    """Run ACO and store selected features + convergence history in session_state."""
+    """
+    Chạy ACO trên full dataset và lưu kết quả vào session_state.
+
+    feature_pool: danh sách features được phép xét (từ sidebar).
+      Nếu None → ACO xét tất cả features.
+      Nếu có   → ACO chỉ tìm trong tập con này (giới hạn không gian tìm kiếm).
+
+    Kết quả lưu vào session_state để dùng ở bước train (Tab 3 Step 2):
+      'aco_features' → danh sách tên features ACO chọn
+      'aco_fitness'  → điểm fitness tốt nhất
+      'aco_history'  → lịch sử fitness mỗi vòng (dùng để vẽ đồ thị hội tụ)
+    """
     X_all, y_all = prepare_features_for_aco(df_clean, target_col)
+
+    # Giới hạn không gian tìm kiếm nếu user chọn feature pool
     if feature_pool is not None:
         X_all = X_all[[f for f in feature_pool if f in X_all.columns]]
 
+    # Hiển thị progress bar trên giao diện Streamlit
     progress_bar = st.progress(0, text=f"Running ACO (0/{ACO_N_ITER} iterations)...")
 
     def _progress(iter_num, n_iter):
         pct = int(iter_num / n_iter * 100)
         progress_bar.progress(pct, text=f"Running ACO ({iter_num}/{n_iter} iterations)...")
 
+    # Chạy toàn bộ thuật toán ACO (50 vòng × 20 kiến)
     aco_features, aco_fitness, aco_history = run_aco(
         X_all, y_all, random_state=123, progress_callback=_progress
     )
     progress_bar.progress(100, text="ACO complete!")
 
+    # Lưu vào session_state để dùng lại khi user click "Start Training"
     st.session_state['aco_features'] = aco_features
-    st.session_state['aco_fitness'] = aco_fitness
-    st.session_state['aco_history'] = aco_history
+    st.session_state['aco_fitness']  = aco_fitness
+    st.session_state['aco_history']  = aco_history
 
 
 def _show_feature_comparison(comparison: dict):
@@ -291,17 +306,39 @@ def _show_feature_comparison(comparison: dict):
 
 
 def main():
+    """
+    Hàm chính điều phối toàn bộ ứng dụng Streamlit.
+
+    Luồng hoạt động:
+      1. Sidebar: chọn dataset, target, features, preprocessing options
+      2. Tab 0 (Home):          Thông tin luận văn
+      3. Tab 1 (Data Overview): Xem dữ liệu thô và sau xử lý missing
+      4. Tab 2 (EDA):           Ma trận tương quan, phân phối features
+      5. Tab 3 (Model Training):
+           Step 1 → Chạy ACO chọn features (hoặc chọn Baseline/All)
+           Step 2 → Train 12 models + Cross-validation
+      6. Tab 4 (Results):       Bảng metrics, ROC curves, confusion matrix
+      7. Tab 5 (Report):        Xuất báo cáo PDF
+      8. Tab 7 (Prediction):    Demo dự đoán bệnh nhân mới
+
+    Streamlit session_state được dùng để lưu kết quả giữa các lần click:
+      'aco_features' → features ACO chọn được
+      'results'      → metrics của 12 models
+      'trainer'      → đối tượng ModelTrainer đã train (dùng cho Prediction tab)
+      'is_vn'        → True nếu đang dùng dataset VN (ảnh hưởng đến feature options)
+    """
     # Sidebar configuration
     st.sidebar.title("⚙️ Configuration")
     st.sidebar.markdown("---")
-    
-    # Data source selection
+
+    # Chọn nguồn dữ liệu: dataset mặc định hoặc upload file mới
     data_source = st.sidebar.radio(
         "Select Data Source:",
         ["Use Default Dataset", "Upload New CSV"]
     )
-    
-    # Load data
+
+    # random_state=201 cho toàn bộ pipeline chính
+    # (khác với random_state=123 của ACO internal)
     preprocessor = DataPreprocessor(random_state=201)
     
     if data_source == "Use Default Dataset":
@@ -321,10 +358,15 @@ def main():
         uploaded_file = st.sidebar.file_uploader("Upload CSV file", type=['csv'])
         if uploaded_file is not None:
             df_raw = pd.read_csv(uploaded_file)
+
+            # Tự động nhận dạng file VN dựa trên tên file có "_vn"
+            # Ví dụ: "thuduc_data_vn.csv" → chạy preprocess_vn_data()
+            #        "heart_disease.csv"  → dùng trực tiếp
             if "_vn" in uploaded_file.name:
                 try:
+                    # Chuyển long format → wide format (xem preprocess_vn_data)
                     df, maxn_to_tenxn = preprocess_vn_data(df_raw)
-                    st.session_state['is_vn'] = True
+                    st.session_state['is_vn']         = True
                     st.session_state['maxn_to_tenxn'] = maxn_to_tenxn
                     st.sidebar.success(
                         f"✅ Vietnamese format detected & preprocessed: "
@@ -334,8 +376,9 @@ def main():
                     st.sidebar.error(f"Lỗi tiền xử lý _vn: {e}")
                     return
             else:
+                # Dataset chuẩn (UCI, Kaggle...) → dùng trực tiếp
                 df = df_raw
-                st.session_state['is_vn'] = False
+                st.session_state['is_vn']         = False
                 st.session_state['maxn_to_tenxn'] = {}
                 st.sidebar.success(f"✅ Uploaded dataset: {df.shape[0]} rows, {df.shape[1]} columns")
         else:
@@ -511,7 +554,7 @@ def main():
         st.pyplot(fig_target)
         
         # Feature distributions
-        st.subheader("Feature Distributions")
+        st.subheader("Phân phối đặc trưng (Feature Distributions)")
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         if target_col in numeric_cols:
             numeric_cols.remove(target_col)
@@ -558,7 +601,47 @@ def main():
                 
                 plt.tight_layout()
                 st.pyplot(fig_dist)
-    
+
+        # Feature distributions by target
+        st.subheader("Phân phối đặc trưng theo biến mục tiêu (Feature Distribution by Target)")
+        if len(numeric_cols) > 0:
+            selected_features_target = st.multiselect(
+                "Chọn đặc trưng để so sánh theo target:",
+                numeric_cols,
+                default=numeric_cols[:4] if len(numeric_cols) >= 4 else numeric_cols,
+                key="feat_by_target"
+            )
+
+            if selected_features_target:
+                n_cols = 2
+                n_rows = (len(selected_features_target) + 1) // 2
+                fig_tgt, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
+                axes = np.array(axes).flatten()
+
+                target_vals = sorted(df[target_col].dropna().unique())
+                colors = ['#2c5aa0', '#e74c3c']
+                labels = {v: f'Không bệnh (={v})' if i == 0 else f'Có bệnh (={v})'
+                          for i, v in enumerate(target_vals)}
+
+                for idx, col in enumerate(selected_features_target):
+                    if idx < len(axes):
+                        vi_name = feature_vi.get(col, col)
+                        for i, val in enumerate(target_vals):
+                            subset = df[df[target_col] == val][col].dropna()
+                            axes[idx].hist(subset, bins=25, alpha=0.6,
+                                           color=colors[i % len(colors)],
+                                           label=labels[val], edgecolor='black')
+                        axes[idx].set_title(f'{vi_name} theo Target', fontsize=12, fontweight='bold')
+                        axes[idx].set_xlabel(vi_name)
+                        axes[idx].set_ylabel('Tần suất')
+                        axes[idx].legend()
+
+                for idx in range(len(selected_features_target), len(axes)):
+                    axes[idx].set_visible(False)
+
+                plt.tight_layout()
+                st.pyplot(fig_tgt)
+
     # Tab 3: Model Training
     with tab3:
         st.markdown('<div class="sub-header">Machine Learning Model Training</div>', unsafe_allow_html=True)
@@ -603,15 +686,14 @@ def main():
         # --- Step 2: Train Models ---
         st.markdown("### Step 2: Train Models")
         if st.button("🚀 Start Training Pipeline", type="primary"):
-            # Determine feature list
             if feature_mode == "Baseline":
-                feature_list = None  # split_data uses paper_features by default
+                feature_list = None
             elif feature_mode == "ACO-selected features":
                 if 'aco_features' not in st.session_state:
                     st.error("❌ Please run ACO Feature Selection first (Step 1).")
                     st.stop()
                 feature_list = st.session_state['aco_features']
-            else:  # All features
+            else:
                 feature_list = selected_features_sidebar
 
             with st.spinner("Processing data..."):
@@ -620,26 +702,24 @@ def main():
                     df_clean, target_col, test_size=test_size,
                     scale_method=scaling_method, feature_list=feature_list
                 )
-                st.success(f"✅ Data split: Train={len(X_train)}, Test={len(X_test)} | "
-                           f"Features ({len(X_train.columns)}): {', '.join(X_train.columns.tolist())}")
 
-            with st.spinner("Training models..."):
-                trainer = ModelTrainer(random_state=201)
-                results, predictions, probabilities = trainer.train_all_models(
-                    X_train, y_train, X_test, y_test
-                )
-                st.success(f"✅ Trained {len(results)} models successfully!")
+            trainer = ModelTrainer(random_state=201)
+            trainer.initialize_models()
 
-
-            # Cross-validation trên full dataset
+            # Bước 1: Cross-validation trước
             if run_cv and k_values:
-                with st.spinner("Performing cross-validation..."):
+                with st.spinner("Bước 1/2: Đang chạy K-Fold Cross-Validation..."):
                     X_full = pd.concat([X_train, X_test])
                     y_full = pd.concat([y_train, y_test])
                     cv_results = trainer.perform_cross_validation(X_full, y_full, k_values=k_values)
-                    st.success(f"✅ Cross-validation complete for K={k_values}!")
             else:
                 cv_results = {}
+
+            # Bước 2: Train models
+            with st.spinner("Bước 2/2: Đang huấn luyện mô hình..."):
+                results, predictions, probabilities = trainer.train_all_models(
+                    X_train, y_train, X_test, y_test
+                )
 
             # Store in session state
             st.session_state['results'] = results
@@ -652,36 +732,50 @@ def main():
             st.session_state['df'] = df_clean
             st.session_state['trained_feature_mode'] = feature_mode
             st.session_state['trained_features'] = list(X_train.columns)
-
+            # Lưu thông tin để hiển thị lại ở lần render tiếp
+            st.session_state['training_summary'] = {
+                'n_train':    len(X_train),
+                'n_test':     len(X_test),
+                'n_features': len(X_train.columns),
+                'features':   list(X_train.columns),
+                'n_models':   len(results),
+                'cv_done':    bool(run_cv and k_values),
+                'k_values':   k_values,
+            }
             st.balloons()
+
+        # Hiển thị status training (bên NGOÀI button block → tồn tại qua mọi lần render)
+        if 'training_summary' in st.session_state:
+            s = st.session_state['training_summary']
+            st.success(f"✅ Data split: Train={s['n_train']}, Test={s['n_test']} | "
+                       f"Features ({s['n_features']}): {', '.join(s['features'])}")
+            if s['cv_done']:
+                st.success(f"✅ Cross-validation complete for K={s['k_values']}!")
+            st.success(f"✅ Trained {s['n_models']} models successfully!")
             st.success("🎉 Training pipeline completed successfully!")
 
-
-        # --- Feature Set Comparison ---
-        if not is_vn:
-          st.markdown("---")
-          st.markdown("### 📊 Compare All Feature Sets")
-          st.caption("Train models on Baseline / ACO / All features side-by-side to find the best feature set.")
-
-        if not is_vn:
-            if 'aco_features' not in st.session_state:
-                st.info("🔔 Run **ACO Feature Selection** first (Step 1 → select ACO → click Run ACO).")
-            else:
-                if st.button("⚡ Run Feature Set Comparison"):
-                    paper_features = ['sex', 'chest pain type', 'fasting blood sugar',
-                                      'resting ecg', 'exercise angina', 'ST slope']
-                    df_temp = preprocessor.handle_missing_values(df, strategy=missing_strategy)
-                    # Filter df_temp to only the sidebar-selected features + target
-                    keep_cols = [c for c in selected_features_sidebar if c in df_temp.columns] + [target_col]
-                    df_temp = df_temp[keep_cols]
-                    baseline_feats = [f for f in paper_features if f in df_temp.columns]
-                    aco_feats = [f for f in st.session_state['aco_features'] if f in df_temp.columns]
-                    with st.spinner("Training all models on 3 feature sets... this may take a minute."):
-                        comparison = compare_all_feature_sets(df_temp, target_col, baseline_feats, aco_feats, random_state=201)
-                    st.session_state['feature_comparison'] = comparison
-
-                if 'feature_comparison' in st.session_state:
-                    _show_feature_comparison(st.session_state['feature_comparison'])
+        # --- Feature Set Comparison --- (ẩn)
+        # if not is_vn:
+        #   st.markdown("---")
+        #   st.markdown("### 📊 Compare All Feature Sets")
+        #   st.caption("Train models on Baseline / ACO / All features side-by-side to find the best feature set.")
+        # if not is_vn:
+        #     if 'aco_features' not in st.session_state:
+        #         st.info("🔔 Run **ACO Feature Selection** first (Step 1 → select ACO → click Run ACO).")
+        #     else:
+        #         if st.button("⚡ Run Feature Set Comparison"):
+        #             paper_features = ['sex', 'chest pain type', 'fasting blood sugar',
+        #                               'resting ecg', 'exercise angina', 'ST slope']
+        #             df_temp = preprocessor.handle_missing_values(df, strategy=missing_strategy)
+        #             keep_cols = [c for c in selected_features_sidebar if c in df_temp.columns] + [target_col]
+        #             df_temp = df_temp[keep_cols]
+        #             baseline_feats = [f for f in paper_features if f in df_temp.columns]
+        #             aco_feats = [f for f in st.session_state['aco_features'] if f in df_temp.columns]
+        #             with st.spinner("Training all models on 3 feature sets... this may take a minute."):
+        #                 comparison = compare_all_feature_sets(df_temp, target_col, baseline_feats, aco_feats, random_state=201)
+        #             st.session_state['feature_comparison'] = comparison
+        #         if 'feature_comparison' in st.session_state:
+        #             _show_feature_comparison(st.session_state['feature_comparison'])
 
     # Tab 4: Results
     with tab4:
@@ -698,9 +792,21 @@ def main():
             
             # Create results tables
             results_tables = trainer.create_results_tables(results, cv_results)
-            
+
+            # Display Table 6: Cross-validation (hiển thị đầu tiên)
+            if cv_results:
+                st.subheader("Table: K-Fold Cross-Validation Results")
+                st.dataframe(
+                    results_tables['table6'],
+                    hide_index=True,
+                    column_config={
+                        "No.": st.column_config.NumberColumn(width="small"),
+                        "Model": st.column_config.TextColumn(width="medium"),
+                    }
+                )
+
             # Display Table 3: Performance Metrics
-            st.subheader("Table 3: Performance Metrics")
+            st.subheader("Table: Performance Metrics")
             st.dataframe(
                 results_tables['table3'],
                 hide_index=True,
@@ -711,7 +817,7 @@ def main():
             )
 
             # Display Table 4: ROC-AUC
-            st.subheader("Table 4: ROC-AUC Values")
+            st.subheader("Table: ROC-AUC Values")
             st.dataframe(
                 results_tables['table4'],
                 hide_index=True,
@@ -722,7 +828,7 @@ def main():
             )
 
             # Display Table 5: Confusion Matrices
-            st.subheader("Table 5: Confusion Matrix Summary")
+            st.subheader("Table: Confusion Matrix Summary")
             st.dataframe(
                 results_tables['table5'],
                 hide_index=True,
@@ -731,23 +837,11 @@ def main():
                     "Model": st.column_config.TextColumn(width="medium"),
                 }
             )
-
-            # Display Table 6: Cross-validation
-            if cv_results:
-                st.subheader("Table 6: K-Fold Cross-Validation Results")
-                st.dataframe(
-                    results_tables['table6'],
-                    hide_index=True,
-                    column_config={
-                        "No.": st.column_config.NumberColumn(width="small"),
-                        "Model": st.column_config.TextColumn(width="medium"),
-                    }
-                )
             
-            # ROC Curves
-            st.subheader("Figure: ROC Curves for All Models")
-            fig_roc = trainer.plot_roc_curves(y_test, probabilities)
-            st.pyplot(fig_roc)
+            # ROC Curves - ẩn
+            # st.subheader("Figure: ROC Curves for All Models")
+            # fig_roc = trainer.plot_roc_curves(y_test, probabilities)
+            # st.pyplot(fig_roc)
 
             # Model Comparison Chart
             st.markdown("---")
@@ -926,42 +1020,37 @@ def main():
                 else:
                     st.warning("Không có model nào hỗ trợ feature importance được train.")
 
-            # Combined Feature Importance (Average across models)
-            if available_importance_models and feature_names is not None and len(available_importance_models) > 1:
-                st.markdown("---")
-                st.subheader("Combined Feature Importance (Average)")
-                st.write("Trung bình feature importance từ tất cả các models hỗ trợ.")
-
-                all_importances = []
-                for model_name in available_importance_models:
-                    model = trainer.trained_models[model_name]
-                    if hasattr(model, 'feature_importances_'):
-                        all_importances.append(model.feature_importances_)
-                    elif hasattr(model, 'estimators_'):
-                        # BaggingClassifier
-                        if all(hasattr(est, 'feature_importances_') for est in model.estimators_):
-                            avg_imp = np.mean([est.feature_importances_ for est in model.estimators_], axis=0)
-                            all_importances.append(avg_imp)
-
-                if all_importances:
-                    avg_importance = np.mean(all_importances, axis=0)
-                    std_importance = np.std(all_importances, axis=0)
-
-                    combined_df = pd.DataFrame({
-                        'Feature': feature_names[:len(avg_importance)],
-                        'Avg Importance': avg_importance,
-                        'Std': std_importance
-                    }).sort_values('Avg Importance', ascending=True)
-
-                    fig_combined, ax = plt.subplots(figsize=(10, max(6, len(feature_names) * 0.4)))
-                    colors_combined = plt.cm.Oranges(np.linspace(0.4, 0.9, len(combined_df)))
-                    bars = ax.barh(combined_df['Feature'], combined_df['Avg Importance'],
-                                  xerr=combined_df['Std'], color=colors_combined, capsize=3)
-                    ax.set_xlabel('Điểm quan trọng trung bình (Avg Importance Score)', fontsize=12)
-                    ax.set_title(f'Mức độ quan trọng đặc trưng tổng hợp (n={len(available_importance_models)} mô hình)',
-                               fontsize=14, fontweight='bold')
-                    plt.tight_layout()
-                    st.pyplot(fig_combined)
+            # Combined Feature Importance (Average across models) - ẩn
+            # if available_importance_models and feature_names is not None and len(available_importance_models) > 1:
+            #     st.markdown("---")
+            #     st.subheader("Combined Feature Importance (Average)")
+            #     st.write("Trung bình feature importance từ tất cả các models hỗ trợ.")
+            #     all_importances = []
+            #     for model_name in available_importance_models:
+            #         model = trainer.trained_models[model_name]
+            #         if hasattr(model, 'feature_importances_'):
+            #             all_importances.append(model.feature_importances_)
+            #         elif hasattr(model, 'estimators_'):
+            #             if all(hasattr(est, 'feature_importances_') for est in model.estimators_):
+            #                 avg_imp = np.mean([est.feature_importances_ for est in model.estimators_], axis=0)
+            #                 all_importances.append(avg_imp)
+            #     if all_importances:
+            #         avg_importance = np.mean(all_importances, axis=0)
+            #         std_importance = np.std(all_importances, axis=0)
+            #         combined_df = pd.DataFrame({
+            #             'Feature': feature_names[:len(avg_importance)],
+            #             'Avg Importance': avg_importance,
+            #             'Std': std_importance
+            #         }).sort_values('Avg Importance', ascending=True)
+            #         fig_combined, ax = plt.subplots(figsize=(10, max(6, len(feature_names) * 0.4)))
+            #         colors_combined = plt.cm.Oranges(np.linspace(0.4, 0.9, len(combined_df)))
+            #         bars = ax.barh(combined_df['Feature'], combined_df['Avg Importance'],
+            #                       xerr=combined_df['Std'], color=colors_combined, capsize=3)
+            #         ax.set_xlabel('Điểm quan trọng trung bình (Avg Importance Score)', fontsize=12)
+            #         ax.set_title(f'Mức độ quan trọng đặc trưng tổng hợp (n={len(available_importance_models)} mô hình)',
+            #                    fontsize=14, fontweight='bold')
+            #         plt.tight_layout()
+            #         st.pyplot(fig_combined)
 
     # Tab 5: Report
     with tab5:
@@ -1392,12 +1481,74 @@ def main():
 
     # Tab 7: Prediction Demo
     with tab7:
-        st.markdown('<div class="sub-header">Heart Disease Prediction Demo</div>', unsafe_allow_html=True)
-        st.write("Nhập thông tin bệnh nhân để dự đoán nguy cơ bệnh tim từ tất cả models đã train.")
+        col_title, col_eye = st.columns([8, 1])
+        with col_title:
+            st.markdown('<div class="sub-header">Heart Disease Prediction Demo</div>', unsafe_allow_html=True)
+        with col_eye:
+            if st.button("👁️", help="Xem giao diện người dùng"):
+                st.session_state['prediction_user_view'] = not st.session_state.get('prediction_user_view', False)
+                st.rerun()
+
+        is_user_view = st.session_state.get('prediction_user_view', False)
+
+        if not is_user_view:
+            st.write("Nhập thông tin bệnh nhân để dự đoán nguy cơ bệnh tim từ tất cả models đã train.")
 
         if 'trainer' not in st.session_state or not st.session_state.get('results'):
             st.warning("⚠️ Vui lòng chạy Training Pipeline trước để sử dụng Prediction Demo.")
             st.info("👈 Đi đến tab 'Model Training' và click 'Start Training Pipeline'")
+        elif is_user_view:
+            # ── USER VIEW ──────────────────────────────────────────────
+            trainer       = st.session_state['trainer']
+            df_stored     = st.session_state.get('df', None)
+            feature_cols  = st.session_state.get('trained_features', [])
+            maxn_to_tenxn = st.session_state.get('maxn_to_tenxn', {})
+
+            st.markdown("## 🫀 Dự đoán Nguy Cơ Bệnh Tim")
+            st.write("Nhập thông tin bệnh nhân và nhấn **Dự đoán** để xem kết quả.")
+            st.markdown("---")
+
+            if df_stored is not None and feature_cols:
+                input_values = {}
+                cols_uv = st.columns(3)
+                for idx, feature in enumerate(feature_cols):
+                    col_idx = idx % 3
+                    label = f"{maxn_to_tenxn[feature]} ({feature})" if maxn_to_tenxn and feature in maxn_to_tenxn else feature
+                    with cols_uv[col_idx]:
+                        min_val     = float(df_stored[feature].min())
+                        max_val     = float(df_stored[feature].max())
+                        mean_val    = float(df_stored[feature].mean())
+                        unique_vals = df_stored[feature].nunique()
+                        if unique_vals <= 5:
+                            options = sorted(df_stored[feature].unique().tolist())
+                            input_values[feature] = st.selectbox(label, options=options, key=f"uv_{feature}")
+                        else:
+                            is_integer = df_stored[feature].dropna().apply(lambda x: x == int(x)).all()
+                            if is_integer:
+                                input_values[feature] = st.number_input(label, min_value=int(min_val), max_value=int(max_val * 1.5), step=1, value=int(mean_val), key=f"uv_{feature}")
+                            else:
+                                input_values[feature] = st.number_input(label, min_value=min_val, max_value=max_val * 1.5, step=(max_val - min_val) / 100, value=mean_val, key=f"uv_{feature}")
+
+                st.markdown("---")
+                if st.button("🔮 Dự đoán", type="primary"):
+                    input_df = pd.DataFrame([input_values])
+                    if 'preprocessor' in st.session_state:
+                        prep = st.session_state['preprocessor']
+                        if hasattr(prep, 'scaler') and prep.scaler is not None:
+                            input_scaled = prep.scaler.transform(input_df)
+                            input_df = pd.DataFrame(input_scaled, columns=feature_cols)
+
+                    vote_positive = sum(1 for _, model in trainer.trained_models.items() if model.predict(input_df)[0] == 1)
+                    vote_negative = len(trainer.trained_models) - vote_positive
+                    total    = vote_positive + vote_negative
+                    risk_pct = vote_positive / total * 100
+
+                    st.markdown("### Kết quả dự đoán")
+                    if risk_pct >= 50:
+                        st.error(f"⚠️ **Nguy cơ CAO** — {vote_positive}/{total} mô hình dự đoán **có bệnh tim** ({risk_pct:.0f}%)")
+                    else:
+                        st.success(f"✅ **Nguy cơ THẤP** — {vote_negative}/{total} mô hình dự đoán **không có bệnh tim** ({100 - risk_pct:.0f}%)")
+                    st.progress(int(risk_pct))
         else:
             trainer = st.session_state['trainer']
             df_stored = st.session_state.get('df', None)
@@ -1415,23 +1566,38 @@ def main():
                 if 'sample_info' not in st.session_state:
                     st.session_state['sample_info'] = None
 
-                # Sample data selection
+                # =============================================================
+                # LOAD DỮ LIỆU MẪU — 4 cách lấy thông tin bệnh nhân
+                # =============================================================
+                # Mục đích: thay vì nhập tay từng giá trị, user có thể lấy
+                # trực tiếp 1 hàng từ dataset để kiểm tra xem model dự đoán
+                # có khớp với nhãn thực tế (target) không.
+                #
+                # feature_cols: danh sách features model đang dùng (sau ACO/Baseline/All)
+                # Mỗi feature được lưu vào session_state với key "input_{feature}"
+                # → các input widget bên dưới sẽ đọc giá trị này làm default
+                # =============================================================
+
                 st.markdown("### Load dữ liệu mẫu từ Dataset")
                 st.write("Chọn một bệnh nhân mẫu từ dataset để test prediction:")
 
                 col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4, vertical_alignment="bottom")
 
                 with col_btn1:
+                    # Random (Có bệnh): lọc df lấy hàng target=1, sample 1 hàng ngẫu nhiên
+                    # random_state=None → mỗi lần click ra bệnh nhân khác nhau
                     if st.button("🔴 Random (Có bệnh)", use_container_width=True):
                         positive_samples = df_stored[df_stored[target_col] == 1]
                         if len(positive_samples) > 0:
                             sample_row = positive_samples.sample(n=1, random_state=None).iloc[0]
+                            # Ghi từng feature vào session_state để điền vào form
                             for feature in feature_cols:
                                 st.session_state[f"input_{feature}"] = float(sample_row[feature])
                             st.session_state['sample_info'] = "Có bệnh tim (target=1)"
-                            st.rerun()
+                            st.rerun()  # reload trang để input widgets cập nhật giá trị mới
 
                 with col_btn2:
+                    # Random (Không bệnh): lọc df lấy hàng target=0, sample 1 hàng ngẫu nhiên
                     if st.button("🟢 Random (Không bệnh)", use_container_width=True):
                         negative_samples = df_stored[df_stored[target_col] == 0]
                         if len(negative_samples) > 0:
@@ -1442,6 +1608,8 @@ def main():
                             st.rerun()
 
                 with col_btn3:
+                    # Load theo index: user nhập số thứ tự hàng cụ thể trong df
+                    # Hữu ích khi muốn kiểm tra lại 1 bệnh nhân cụ thể đã biết index
                     st.caption(f"📋 Load theo index (0–{len(df_stored)-1})")
                     sub_input, sub_btn = st.columns([2, 1], vertical_alignment="bottom")
                     with sub_input:
@@ -1458,9 +1626,11 @@ def main():
                         load_clicked = st.button("Load", use_container_width=True)
 
                 with col_btn4:
+                    # Reset: xóa toàn bộ giá trị đã điền → về trạng thái trống
                     reset_clicked = st.button("🔄 Reset", use_container_width=True)
 
                 if load_clicked:
+                    # Lấy hàng theo index, điền từng feature vào session_state
                     sample_row = df_stored.iloc[sample_idx]
                     for feature in feature_cols:
                         st.session_state[f"input_{feature}"] = float(sample_row[feature])
@@ -1469,6 +1639,7 @@ def main():
                     st.rerun()
 
                 if reset_clicked:
+                    # Xóa tất cả key "input_*" khỏi session_state → form về rỗng
                     for feature in feature_cols:
                         if f"input_{feature}" in st.session_state:
                             del st.session_state[f"input_{feature}"]
