@@ -647,7 +647,7 @@ def main():
         st.markdown('<div class="sub-header">Machine Learning Model Training</div>', unsafe_allow_html=True)
 
         # --- Step 1: Feature Selection ---
-        st.markdown("### Step 1: Choose Feature Set")
+        st.markdown("### Choose Feature Set")
         is_vn = st.session_state.get('is_vn', False)
         feature_options = ["ACO-selected features", "All features"] if is_vn else ["ACO-selected features", "Baseline", "All features"]
         feature_mode = st.radio(
@@ -684,7 +684,7 @@ def main():
         st.markdown("---")
 
         # --- Step 2: Train Models ---
-        st.markdown("### Step 2: Train Models")
+        st.markdown("### Train Models")
         if st.button("🚀 Start Training Pipeline", type="primary"):
             if feature_mode == "Baseline":
                 feature_list = None
@@ -890,135 +890,67 @@ def main():
             with col3:
                 st.metric("Best F1-Score", model_names[best_f1_idx], f"{f1_scores[best_f1_idx]:.3f}")
 
-            # Feature Importance
-            st.markdown("---")
-            st.subheader("Feature Importance Analysis")
-            st.write("Feature importance từ các models có hỗ trợ (Random Forest, XGBoost, GBM, etc.)")
-
-            # Info expander explaining which models support feature importance
-            with st.expander("ℹ️ Tại sao chỉ một số models có Feature Importance?"):
-                st.markdown("""
-                **Không phải tất cả ML models đều hỗ trợ Feature Importance.** Dưới đây là bảng giải thích:
-
-                | Model | Hỗ trợ | Lý do |
-                |-------|:------:|-------|
-                | Random Forest | ✅ | Tree-based: tính từ Gini importance hoặc mean decrease impurity |
-                | XGBoost | ✅ | Tree-based: tính từ gain, weight, hoặc cover |
-                | GBM | ✅ | Tree-based: tính từ feature split frequency |
-                | Bagged Tree | ✅ | Trung bình importance từ 100 Decision Trees |
-                | CIT | ✅ | Decision Tree: tính từ information gain |
-                | Logistic Regression | ❌ | Có `coef_` (hệ số) nhưng không phải importance trực tiếp |
-                | SVM | ❌ | Kernel-based: không có feature importance (trừ linear kernel) |
-                | KNN | ❌ | Instance-based: không học trọng số features |
-                | Neural Network | ❌ | Black-box: weights phức tạp, khó interpret |
-                | MANN | ❌ | Giống Neural Network |
-                | Naive Bayes | ❌ | Probabilistic: dùng likelihood, không có importance |
-                | FDA/LDA | ❌ | Có `coef_` nhưng là discriminant coefficients |
-
-                **Lưu ý:**
-                - `feature_importances_` là thuộc tính chuẩn của sklearn cho tree-based models
-                - Các linear models (Logistic Regression, LDA) có thể dùng absolute coefficients như proxy
-                - Neural Networks cần techniques đặc biệt như SHAP hoặc Permutation Importance
-                """)
-
-
-            # Get feature names from preprocessor
-            if 'preprocessor' in st.session_state:
-                preprocessor = st.session_state['preprocessor']
-                if hasattr(preprocessor, 'feature_names') and preprocessor.feature_names is not None:
-                    feature_names = preprocessor.feature_names
-                else:
-                    # Try to get from df
-                    df_stored = st.session_state.get('df', None)
-                    if df_stored is not None:
-                        feature_names = [col for col in df_stored.columns if col != target_col]
-                    else:
-                        feature_names = None
-            else:
-                feature_names = None
-
-            # Models that support feature importance (must match exact names in models.py)
-            importance_models = ['Random Forest', 'XGBoost', 'GBM', 'Bagged Tree', 'CIT']
-            available_importance_models = []
-            for m in importance_models:
-                if m in trainer.trained_models:
-                    model = trainer.trained_models[m]
-                    # Check for direct feature_importances_ or estimators with it
-                    if hasattr(model, 'feature_importances_'):
-                        available_importance_models.append(m)
-                    elif hasattr(model, 'estimators_'):
-                        # BaggingClassifier: compute average from base estimators
-                        if all(hasattr(est, 'feature_importances_') for est in model.estimators_):
-                            available_importance_models.append(m)
-
-            if available_importance_models and feature_names is not None:
-                selected_importance_model = st.selectbox(
-                    "Chọn model để xem Feature Importance:",
-                    available_importance_models
-                )
-
-                if selected_importance_model:
-                    model = trainer.trained_models[selected_importance_model]
-
-                    # Get feature importances
-                    importances = None
-                    if hasattr(model, 'feature_importances_'):
-                        importances = model.feature_importances_
-                    elif hasattr(model, 'estimators_'):
-                        # BaggingClassifier: average feature importance from all estimators
-                        if all(hasattr(est, 'feature_importances_') for est in model.estimators_):
-                            importances = np.mean([est.feature_importances_ for est in model.estimators_], axis=0)
-
-                    if importances is not None:
-
-                        # Create importance dataframe
-                        importance_df = pd.DataFrame({
-                            'Feature': feature_names[:len(importances)],
-                            'Importance': importances
-                        }).sort_values('Importance', ascending=True)
-
-                        # Plot
-                        fig_imp, ax = plt.subplots(figsize=(10, max(6, len(feature_names) * 0.4)))
-                        colors_imp = plt.cm.Blues(np.linspace(0.4, 0.9, len(importance_df)))
-                        bars = ax.barh(importance_df['Feature'], importance_df['Importance'], color=colors_imp)
-                        ax.set_xlabel('Điểm quan trọng (Importance Score)', fontsize=12)
-                        ax.set_title(f'Mức độ quan trọng đặc trưng — {selected_importance_model}', fontsize=14, fontweight='bold')
-
-                        # Add value labels
-                        for bar, val in zip(bars, importance_df['Importance']):
-                            ax.text(val + 0.001, bar.get_y() + bar.get_height()/2,
-                                   f'{val:.4f}', va='center', fontsize=9)
-
-                        plt.tight_layout()
-                        st.pyplot(fig_imp)
-
-                        # Top features table
-                        st.markdown("#### Top 5 Most Important Features")
-                        top_features = importance_df.nlargest(5, 'Importance')[['Feature', 'Importance']]
-                        top_features['Importance'] = top_features['Importance'].apply(lambda x: f"{x:.4f}")
-                        top_features = top_features.reset_index(drop=True)
-                        top_features.insert(0, 'Rank', range(1, len(top_features) + 1))
-                        st.dataframe(top_features, hide_index=True)
-
-                        # Interpretation
-                        st.markdown("#### Interpretation")
-                        top_feature = importance_df.nlargest(1, 'Importance')['Feature'].values[0]
-                        st.info(f"""
-                        **Feature quan trọng nhất:** `{top_feature}`
-
-                        Feature importance cho thấy mức độ đóng góp của mỗi feature vào việc dự đoán bệnh tim:
-                        - **Giá trị cao**: Feature có ảnh hưởng lớn đến prediction
-                        - **Giá trị thấp**: Feature ít ảnh hưởng đến prediction
-
-                        Điều này giúp bác sĩ hiểu được yếu tố nào cần chú ý nhất khi đánh giá nguy cơ bệnh tim.
-                        """)
-                    else:
-                        st.warning(f"Model {selected_importance_model} không hỗ trợ feature_importances_")
-            else:
-                if feature_names is None:
-                    st.warning("Không thể lấy tên features. Hãy chạy training pipeline trước.")
-                else:
-                    st.warning("Không có model nào hỗ trợ feature importance được train.")
+            # Feature Importance Analysis - ẩn
+            # st.markdown("---")
+            # st.subheader("Feature Importance Analysis")
+            # st.write("Feature importance từ các models có hỗ trợ (Random Forest, XGBoost, GBM, etc.)")
+            # with st.expander("ℹ️ Tại sao chỉ một số models có Feature Importance?"):
+            #     st.markdown("""...""")
+            # if 'preprocessor' in st.session_state:
+            #     preprocessor = st.session_state['preprocessor']
+            #     if hasattr(preprocessor, 'feature_names') and preprocessor.feature_names is not None:
+            #         feature_names = preprocessor.feature_names
+            #     else:
+            #         df_stored = st.session_state.get('df', None)
+            #         if df_stored is not None:
+            #             feature_names = [col for col in df_stored.columns if col != target_col]
+            #         else:
+            #             feature_names = None
+            # else:
+            #     feature_names = None
+            # importance_models = ['Random Forest', 'XGBoost', 'GBM', 'Bagged Tree', 'CIT']
+            # available_importance_models = []
+            # for m in importance_models:
+            #     if m in trainer.trained_models:
+            #         model = trainer.trained_models[m]
+            #         if hasattr(model, 'feature_importances_'):
+            #             available_importance_models.append(m)
+            #         elif hasattr(model, 'estimators_'):
+            #             if all(hasattr(est, 'feature_importances_') for est in model.estimators_):
+            #                 available_importance_models.append(m)
+            # if available_importance_models and feature_names is not None:
+            #     selected_importance_model = st.selectbox("Chọn model để xem Feature Importance:", available_importance_models)
+            #     if selected_importance_model:
+            #         model = trainer.trained_models[selected_importance_model]
+            #         importances = None
+            #         if hasattr(model, 'feature_importances_'):
+            #             importances = model.feature_importances_
+            #         elif hasattr(model, 'estimators_'):
+            #             if all(hasattr(est, 'feature_importances_') for est in model.estimators_):
+            #                 importances = np.mean([est.feature_importances_ for est in model.estimators_], axis=0)
+            #         if importances is not None:
+            #             importance_df = pd.DataFrame({'Feature': feature_names[:len(importances)], 'Importance': importances}).sort_values('Importance', ascending=True)
+            #             fig_imp, ax = plt.subplots(figsize=(10, max(6, len(feature_names) * 0.4)))
+            #             colors_imp = plt.cm.Blues(np.linspace(0.4, 0.9, len(importance_df)))
+            #             bars = ax.barh(importance_df['Feature'], importance_df['Importance'], color=colors_imp)
+            #             ax.set_xlabel('Điểm quan trọng (Importance Score)', fontsize=12)
+            #             ax.set_title(f'Mức độ quan trọng đặc trưng — {selected_importance_model}', fontsize=14, fontweight='bold')
+            #             for bar, val in zip(bars, importance_df['Importance']):
+            #                 ax.text(val + 0.001, bar.get_y() + bar.get_height()/2, f'{val:.4f}', va='center', fontsize=9)
+            #             plt.tight_layout()
+            #             st.pyplot(fig_imp)
+            #             top_features = importance_df.nlargest(5, 'Importance')[['Feature', 'Importance']]
+            #             top_features['Importance'] = top_features['Importance'].apply(lambda x: f"{x:.4f}")
+            #             top_features = top_features.reset_index(drop=True)
+            #             top_features.insert(0, 'Rank', range(1, len(top_features) + 1))
+            #             st.dataframe(top_features, hide_index=True)
+            #         else:
+            #             st.warning(f"Model {selected_importance_model} không hỗ trợ feature_importances_")
+            # else:
+            #     if feature_names is None:
+            #         st.warning("Không thể lấy tên features. Hãy chạy training pipeline trước.")
+            #     else:
+            #         st.warning("Không có model nào hỗ trợ feature importance được train.")
 
             # Combined Feature Importance (Average across models) - ẩn
             # if available_importance_models and feature_names is not None and len(available_importance_models) > 1:
